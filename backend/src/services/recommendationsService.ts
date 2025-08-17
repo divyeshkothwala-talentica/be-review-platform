@@ -2,6 +2,8 @@ import openaiService, { RecommendationRequest } from './openaiService';
 import fallbackRecommendationService from './fallbackRecommendationService';
 import userPreferenceService, { UserPreferences } from './userPreferenceService';
 import { logger } from '../utils/logger';
+import { RecommendationHistory, IRecommendationHistory } from '../models';
+import config from '../config';
 
 interface RecommendationResponse {
   recommendations: Array<{
@@ -47,8 +49,8 @@ class RecommendationsService {
     try {
       logger.info('Starting recommendation generation', { userId });
 
-      // Check cache first
-      const cachedRecommendations = this.getCachedRecommendations(userId);
+      // Check cache first (both memory and database)
+      const cachedRecommendations = await this.getCachedRecommendations(userId);
       if (cachedRecommendations) {
         logger.info('Returning cached recommendations', { userId });
         return cachedRecommendations;
@@ -101,8 +103,8 @@ class RecommendationsService {
         );
       }
 
-      // Cache the recommendations
-      this.cacheRecommendations(userId, recommendations);
+      // Cache the recommendations (both memory and database)
+      await this.cacheRecommendations(userId, recommendations);
 
       logger.info('Recommendations generated successfully', {
         userId,
@@ -249,33 +251,104 @@ class RecommendationsService {
 
   /**
    * Get cached recommendations if available and not expired
+   * First checks in-memory cache, then falls back to database
    */
-  private getCachedRecommendations(userId: string): RecommendationResponse | null {
-    const cached = this.cache.get(userId);
-    
-    if (!cached) {
-      return null;
+  private async getCachedRecommendations(userId: string): Promise<RecommendationResponse | null> {
+    // Check in-memory cache first (fastest)
+    const memoryCache = this.cache.get(userId);
+    if (memoryCache && Date.now() <= memoryCache.expiresAt) {
+      logger.debug('Returning in-memory cached recommendations', { userId });
+      return memoryCache.data;
     }
 
-    if (Date.now() > cached.expiresAt) {
+    // Clean up expired memory cache
+    if (memoryCache && Date.now() > memoryCache.expiresAt) {
       this.cache.delete(userId);
-      return null;
     }
 
-    return cached.data;
+    // Check database cache
+    try {
+      const dbCache = await (RecommendationHistory as any).findActiveForUser(userId);
+      if (dbCache && !dbCache.isExpired()) {
+        logger.debug('Returning database cached recommendations', { userId });
+        
+        // Convert database format to response format
+        const response: RecommendationResponse = {
+          recommendations: dbCache.recommendations,
+          metadata: {
+            userId: dbCache.userId.toString(),
+            generatedAt: dbCache.metadata.generatedAt.toISOString(),
+            source: dbCache.metadata.source,
+            userPreferences: dbCache.metadata.userPreferences,
+            processingTime: dbCache.metadata.processingTime,
+          },
+        };
+
+        // Also cache in memory for faster subsequent access
+        this.cacheRecommendations(userId, response);
+        
+        return response;
+      }
+    } catch (error) {
+      logger.warn('Error retrieving cached recommendations from database', {
+        userId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+
+    return null;
   }
 
   /**
-   * Cache recommendations for user
+   * Cache recommendations for user (both memory and database)
    */
-  private cacheRecommendations(userId: string, recommendations: RecommendationResponse): void {
+  private async cacheRecommendations(userId: string, recommendations: RecommendationResponse): Promise<void> {
     const now = Date.now();
     
+    // Cache in memory for fastest access
     this.cache.set(userId, {
       data: recommendations,
       timestamp: now,
       expiresAt: now + this.CACHE_DURATION,
     });
+
+    // Cache in database for persistence across server restarts
+    try {
+      // Deactivate any existing active recommendations for this user
+      await RecommendationHistory.updateMany(
+        { userId, isActive: true },
+        { isActive: false }
+      );
+
+      // Create new recommendation history entry
+      const recommendationHistory = new RecommendationHistory({
+        userId,
+        recommendations: recommendations.recommendations,
+        metadata: {
+          generatedAt: new Date(recommendations.metadata.generatedAt),
+          source: recommendations.metadata.source,
+          userPreferences: recommendations.metadata.userPreferences,
+          processingTime: recommendations.metadata.processingTime,
+          openaiModel: config.openaiModel,
+          cacheHit: false,
+        },
+        expiresAt: new Date(now + this.CACHE_DURATION),
+        isActive: true,
+      });
+
+      await recommendationHistory.save();
+      
+      logger.debug('Recommendations cached in database', { 
+        userId, 
+        recommendationId: recommendationHistory._id 
+      });
+    } catch (error) {
+      logger.warn('Failed to cache recommendations in database', {
+        userId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      // Don't throw error - memory cache is still working
+    }
 
     // Clean up expired cache entries periodically
     this.cleanupExpiredCache();
@@ -284,9 +357,24 @@ class RecommendationsService {
   /**
    * Invalidate cache for user (call when user adds review/favorite)
    */
-  public invalidateUserCache(userId: string): void {
+  public async invalidateUserCache(userId: string): Promise<void> {
+    // Clear memory cache
     this.cache.delete(userId);
-    logger.info('User recommendation cache invalidated', { userId });
+    
+    // Deactivate database cache
+    try {
+      await RecommendationHistory.updateMany(
+        { userId, isActive: true },
+        { isActive: false }
+      );
+      logger.info('User recommendation cache invalidated (memory and database)', { userId });
+    } catch (error) {
+      logger.warn('Failed to invalidate database cache', {
+        userId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      logger.info('User recommendation cache invalidated (memory only)', { userId });
+    }
   }
 
   /**
@@ -326,11 +414,28 @@ class RecommendationsService {
   }
 
   /**
-   * Clear all cached recommendations
+   * Clear all cached recommendations (memory and database)
    */
-  public clearCache(): void {
+  public async clearCache(): Promise<void> {
+    // Clear memory cache
     this.cache.clear();
-    logger.info('Recommendation cache cleared');
+    
+    // Deactivate all database cache entries
+    try {
+      const result = await RecommendationHistory.updateMany(
+        { isActive: true },
+        { isActive: false }
+      );
+      logger.info('All recommendation cache cleared', { 
+        memoryCleared: true,
+        databaseDeactivated: result.modifiedCount 
+      });
+    } catch (error) {
+      logger.warn('Failed to clear database cache', {
+        error: error instanceof Error ? error.message : String(error),
+      });
+      logger.info('Recommendation cache cleared (memory only)');
+    }
   }
 
   /**
@@ -403,6 +508,81 @@ class RecommendationsService {
         fallbackWorking: false,
         cacheWorking: false,
       };
+    }
+  }
+
+  /**
+   * Get user's recommendation history
+   */
+  public async getUserRecommendationHistory(
+    userId: string,
+    limit: number = 10,
+    skip: number = 0
+  ): Promise<IRecommendationHistory[]> {
+    try {
+      return await (RecommendationHistory as any).getUserHistory(userId, limit, skip);
+    } catch (error) {
+      logger.error('Error retrieving user recommendation history:', error);
+      throw new Error('Failed to retrieve recommendation history');
+    }
+  }
+
+  /**
+   * Get recommendation analytics
+   */
+  public async getRecommendationAnalytics(
+    startDate?: Date,
+    endDate?: Date
+  ): Promise<any> {
+    try {
+      return await (RecommendationHistory as any).getAnalytics(startDate, endDate);
+    } catch (error) {
+      logger.error('Error retrieving recommendation analytics:', error);
+      throw new Error('Failed to retrieve recommendation analytics');
+    }
+  }
+
+  /**
+   * Get database cache statistics
+   */
+  public async getDatabaseCacheStats(): Promise<{
+    totalActive: number;
+    totalExpired: number;
+    bySource: Array<{ source: string; count: number }>;
+    oldestActive?: Date;
+    newestActive?: Date;
+  }> {
+    try {
+      const now = new Date();
+      
+      const [activeCount, expiredCount, bySource, oldestActive, newestActive] = await Promise.all([
+        RecommendationHistory.countDocuments({ isActive: true, expiresAt: { $gt: now } }),
+        RecommendationHistory.countDocuments({ $or: [{ isActive: false }, { expiresAt: { $lte: now } }] }),
+        RecommendationHistory.aggregate([
+          { $match: { isActive: true, expiresAt: { $gt: now } } },
+          { $group: { _id: '$metadata.source', count: { $sum: 1 } } },
+          { $project: { source: '$_id', count: 1, _id: 0 } },
+        ]),
+        RecommendationHistory.findOne({ isActive: true, expiresAt: { $gt: now } })
+          .sort({ createdAt: 1 })
+          .select('createdAt')
+          .lean(),
+        RecommendationHistory.findOne({ isActive: true, expiresAt: { $gt: now } })
+          .sort({ createdAt: -1 })
+          .select('createdAt')
+          .lean(),
+      ]);
+
+      return {
+        totalActive: activeCount,
+        totalExpired: expiredCount,
+        bySource,
+        oldestActive: oldestActive?.createdAt,
+        newestActive: newestActive?.createdAt,
+      };
+    } catch (error) {
+      logger.error('Error retrieving database cache statistics:', error);
+      throw new Error('Failed to retrieve database cache statistics');
     }
   }
 }

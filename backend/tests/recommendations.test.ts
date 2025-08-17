@@ -5,6 +5,7 @@ import User from '../src/models/User';
 import Book from '../src/models/Book';
 import Review from '../src/models/Review';
 import Favorite from '../src/models/Favorite';
+import { RecommendationHistory, RecommendationFeedback } from '../src/models';
 import recommendationsService from '../src/services/recommendationsService';
 import openaiService from '../src/services/openaiService';
 import { JWTService } from '../src/services/jwtService';
@@ -29,6 +30,8 @@ describe('Recommendations API', () => {
       Book.deleteMany({}),
       Review.deleteMany({}),
       Favorite.deleteMany({}),
+      RecommendationHistory.deleteMany({}),
+      RecommendationFeedback.deleteMany({}),
     ]);
 
     // Create test user
@@ -140,18 +143,20 @@ describe('Recommendations API', () => {
       Book.deleteMany({}),
       Review.deleteMany({}),
       Favorite.deleteMany({}),
+      RecommendationHistory.deleteMany({}),
+      RecommendationFeedback.deleteMany({}),
     ]);
     
     // Clear recommendation cache
-    recommendationsService.clearCache();
+    await recommendationsService.clearCache();
     
     // Close database connection
     await mongoose.connection.close();
   });
 
-  beforeEach(() => {
+  beforeEach(async () => {
     // Clear cache before each test
-    recommendationsService.clearCache();
+    await recommendationsService.clearCache();
   });
 
   describe('GET /api/v1/recommendations', () => {
@@ -344,12 +349,16 @@ describe('Recommendations API', () => {
       expect(response.body.success).toBe(true);
       expect(response.body.message).toContain('cleared');
 
-      // Verify cache is empty
+      // Verify memory cache is empty
       const statsResponse = await request(app)
         .get('/api/v1/recommendations/cache/stats')
         .expect(200);
 
       expect(statsResponse.body.data.cache.size).toBe(0);
+      
+      // Verify database cache is also cleared
+      const activeCount = await RecommendationHistory.countDocuments({ isActive: true });
+      expect(activeCount).toBe(0);
     });
   });
 
@@ -433,7 +442,7 @@ describe('Recommendations API', () => {
 
     it('should invalidate cache when user adds to favorites', async () => {
       // Clear cache first
-      recommendationsService.clearCache();
+      await recommendationsService.clearCache();
 
       // Get initial recommendations
       const response1 = await request(app)
