@@ -306,10 +306,8 @@ export const sanitizeInput = (req: Request, _res: Response, next: NextFunction):
     req.body = sanitizeObject(req.body);
   }
 
-  // Sanitize query parameters
-  if (req.query) {
-    req.query = sanitizeObject(req.query);
-  }
+  // Sanitize query parameters (skip since req.query is read-only)
+  // Query parameters are already handled by express-validator in route handlers
 
   next();
 };

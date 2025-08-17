@@ -11,6 +11,17 @@ export interface IFavorite extends Document {
   createdAt: Date;
 }
 
+// Interface for Favorite static methods
+export interface IFavoriteModel extends mongoose.Model<IFavorite> {
+  isBookFavoritedByUser(userId: string, bookId: string): Promise<boolean>;
+  getUserFavoriteCount(userId: string): Promise<number>;
+  getFavoriteCountForBook(bookId: string): Promise<number>;
+  toggleFavorite(userId: string, bookId: string): Promise<{ action: 'added' | 'removed'; favorite?: IFavorite }>;
+  getPopularBooks(limit?: number): Promise<any[]>;
+  findUserFavoritesWithBooks(userId: string): Promise<any[]>;
+  findBookFavorites(bookId: string): Promise<any[]>;
+}
+
 // Favorite schema definition
 const favoriteSchema = new Schema<IFavorite>(
   {
@@ -196,6 +207,6 @@ favoriteSchema.set('toJSON', { virtuals: true });
 favoriteSchema.set('toObject', { virtuals: true });
 
 // Create and export the Favorite model
-const Favorite = mongoose.model<IFavorite>('Favorite', favoriteSchema);
+const Favorite = mongoose.model<IFavorite, IFavoriteModel>('Favorite', favoriteSchema);
 
 export default Favorite;
