@@ -1,7 +1,37 @@
-import rateLimit from 'express-rate-limit';
+import rateLimit, { RateLimitRequestHandler } from 'express-rate-limit';
 import { Request, Response } from 'express';
 import config from '../config';
 import { ResponseUtil } from '../utils/response';
+
+// Generic rate limiter factory function
+export const rateLimiter = (options: {
+  windowMs?: number;
+  max?: number;
+  message?: string;
+  standardHeaders?: boolean;
+  legacyHeaders?: boolean;
+}): RateLimitRequestHandler => {
+  return rateLimit({
+    windowMs: options.windowMs || config.rateLimitWindowMs,
+    max: options.max || config.rateLimitMaxRequests,
+    message: {
+      success: false,
+      error: {
+        code: 'RATE_LIMIT_EXCEEDED',
+        message: options.message || 'Too many requests from this IP, please try again later.',
+        timestamp: new Date().toISOString(),
+      },
+    },
+    standardHeaders: options.standardHeaders ?? true,
+    legacyHeaders: options.legacyHeaders ?? false,
+    handler: (_req: Request, res: Response) => {
+      ResponseUtil.tooManyRequests(
+        res,
+        options.message || `Too many requests from this IP, please try again later.`
+      );
+    },
+  });
+};
 
 // General rate limiter for all requests
 export const generalLimiter = rateLimit({

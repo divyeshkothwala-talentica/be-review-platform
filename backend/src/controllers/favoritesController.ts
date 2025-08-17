@@ -1,5 +1,6 @@
 import { Request, Response } from 'express';
 import { ResponseUtil } from '../utils/response';
+import recommendationsService from '../services/recommendationsService';
 import Favorite from '../models/Favorite';
 import Book from '../models/Book';
 import { logger } from '../utils/logger';
@@ -127,6 +128,9 @@ export class FavoritesController {
 
       await newFavorite.save();
 
+      // Invalidate user's recommendation cache since preferences may have changed
+      recommendationsService.invalidateUserCache(userId);
+
       // Populate book details for response
       const favoriteWithBook = await Favorite.findById(newFavorite._id)
         .populate({
@@ -196,6 +200,9 @@ export class FavoritesController {
       if (!removedFavorite) {
         return ResponseUtil.notFound(res, 'Favorite not found');
       }
+
+      // Invalidate user's recommendation cache since preferences may have changed
+      recommendationsService.invalidateUserCache(userId);
 
       logger.info(`Book removed from favorites`, {
         userId,

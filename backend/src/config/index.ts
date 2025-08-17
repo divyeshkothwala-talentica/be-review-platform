@@ -21,6 +21,11 @@ interface Config {
     socketTimeoutMS: number;
     family: number;
   };
+  // OpenAI configuration
+  openaiApiKey: string;
+  openaiModel: string;
+  openaiMaxTokens: number;
+  openaiTemperature: number;
 }
 
 const config: Config = {
@@ -42,11 +47,17 @@ const config: Config = {
     socketTimeoutMS: parseInt(process.env.MONGO_SOCKET_TIMEOUT_MS || '45000', 10),
     family: 4, // Use IPv4, skip trying IPv6
   },
+
+  // OpenAI configuration
+  openaiApiKey: process.env.OPENAI_API_KEY || '',
+  openaiModel: process.env.OPENAI_MODEL || 'gpt-3.5-turbo',
+  openaiMaxTokens: parseInt(process.env.OPENAI_MAX_TOKENS || '1000', 10),
+  openaiTemperature: parseFloat(process.env.OPENAI_TEMPERATURE || '0.7'),
 };
 
 // Validation for required environment variables in production
 if (config.nodeEnv === 'production') {
-  const requiredEnvVars = ['JWT_SECRET', 'MONGO_URI'];
+  const requiredEnvVars = ['JWT_SECRET', 'MONGO_URI', 'OPENAI_API_KEY'];
 
   for (const envVar of requiredEnvVars) {
     if (!process.env[envVar]) {

@@ -1,5 +1,6 @@
 import { Request, Response } from 'express';
 import reviewsService, { CreateReviewData, UpdateReviewData, ReviewsQuery } from '../services/reviewsService';
+import recommendationsService from '../services/recommendationsService';
 import { ApiResponse } from '../utils/response';
 import { logger } from '../utils/logger';
 import { IUser } from '../models/User';
@@ -34,6 +35,9 @@ export class ReviewsController {
       };
 
       const review = await reviewsService.createReview(reviewData);
+
+      // Invalidate user's recommendation cache since preferences may have changed
+      recommendationsService.invalidateUserCache(userId.toString());
 
       logger.info('Review created successfully', { 
         reviewId: review._id, 
@@ -105,6 +109,9 @@ export class ReviewsController {
       if (rating !== undefined) updateData.rating = rating;
 
       const review = await reviewsService.updateReview(reviewId, userId, updateData);
+
+      // Invalidate user's recommendation cache since preferences may have changed
+      recommendationsService.invalidateUserCache(userId.toString());
 
       logger.info('Review updated successfully', { 
         reviewId, 
