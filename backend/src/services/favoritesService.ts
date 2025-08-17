@@ -1,4 +1,4 @@
-import Favorite, { IFavorite } from '../models/Favorite';
+import Favorite from '../models/Favorite';
 import Book, { IBook } from '../models/Book';
 import { logger } from '../utils/logger';
 
@@ -140,7 +140,7 @@ export class FavoritesService {
           select: 'title author coverImageUrl averageRating totalReviews genres',
         })
         .lean()
-        .exec();
+        .exec() as any;
 
       logger.info(`Book added to favorites`, {
         userId,
@@ -341,7 +341,7 @@ export class FavoritesService {
             select: 'title author coverImageUrl averageRating totalReviews genres',
           })
           .lean()
-          .exec();
+          .exec() as any;
 
         logger.info(`Favorite toggled - added`, {
           userId,
