@@ -1,9 +1,8 @@
 ---
 alwaysApply: true
 ---
-
 ## Always have code lines between 300-400.
 
-## use /Users/divyeshk/learning/be-review-platform path as the project path by default.
+## use /Users/divyeshk/learning/fe-review-platform path as the project path by default.
 
 ## Update the progress.md file after each tasks completion. 
