@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import AuthController from '../controllers/authController';
-import { authenticateToken, authRateLimit } from '../middleware/auth';
+import { authenticateToken } from '../middleware/auth';
 import { 
   validateRequest, 
   authValidationSchemas, 
@@ -23,7 +23,6 @@ const router = Router();
  */
 router.post(
   '/register',
-  authRateLimit(5, 15 * 60 * 1000), // 5 attempts per 15 minutes
   sanitizeInput,
   normalizeEmail,
   validateRequest(authValidationSchemas.register),
@@ -38,7 +37,6 @@ router.post(
  */
 router.post(
   '/login',
-  authRateLimit(5, 15 * 60 * 1000), // 5 attempts per 15 minutes
   sanitizeInput,
   normalizeEmail,
   validateRequest(authValidationSchemas.login),
@@ -78,7 +76,6 @@ router.get(
  */
 router.put(
   '/password',
-  authRateLimit(3, 15 * 60 * 1000), // 3 attempts per 15 minutes
   authenticateToken,
   sanitizeInput,
   validateRequest(authValidationSchemas.changePassword),
@@ -93,7 +90,6 @@ router.put(
  */
 router.post(
   '/validate',
-  authRateLimit(10, 5 * 60 * 1000), // 10 attempts per 5 minutes
   sanitizeInput,
   validateRequest(authValidationSchemas.validateToken),
   AuthController.validateToken

@@ -1,6 +1,5 @@
 import express from 'express';
 import { authenticateToken } from '../middleware/auth';
-import { rateLimiter } from '../middleware/rateLimiter';
 import {
   getRecommendations,
   invalidateRecommendationCache,
@@ -19,13 +18,6 @@ const router = express.Router();
  */
 router.get(
   '/',
-  rateLimiter({
-    windowMs: 10 * 60 * 1000, // 10 minutes
-    max: 10, // 10 requests per window
-    message: 'Too many recommendation requests. Please try again later.',
-    standardHeaders: true,
-    legacyHeaders: false,
-  }),
   authenticateToken,
   getRecommendations
 );

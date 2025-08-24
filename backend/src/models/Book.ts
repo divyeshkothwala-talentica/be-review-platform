@@ -175,7 +175,7 @@ bookSchema.index(
 
 // Virtual field for formatted rating display
 bookSchema.virtual('formattedRating').get(function () {
-  return this.averageRating.toFixed(1);
+  return (this.averageRating || 0).toFixed(1);
 });
 
 // Virtual field to check if book is recently published (within last 2 years)
@@ -208,32 +208,39 @@ bookSchema.methods.updateRatingStats = async function (
   isNewReview: boolean = true,
   oldRating?: number
 ) {
+  // Ensure averageRating and totalReviews have default values
+  const currentAvgRating = this.averageRating || 0;
+  const currentTotalReviews = this.totalReviews || 0;
+  
   if (isNewReview) {
     // Adding a new review
-    const totalRatingPoints = this.averageRating * this.totalReviews + newRating;
-    this.totalReviews += 1;
+    const totalRatingPoints = currentAvgRating * currentTotalReviews + newRating;
+    this.totalReviews = currentTotalReviews + 1;
     this.averageRating = totalRatingPoints / this.totalReviews;
   } else if (oldRating !== undefined) {
     // Updating an existing review
-    const totalRatingPoints = this.averageRating * this.totalReviews - oldRating + newRating;
-    this.averageRating = this.totalReviews > 0 ? totalRatingPoints / this.totalReviews : 0;
+    const totalRatingPoints = currentAvgRating * currentTotalReviews - oldRating + newRating;
+    this.averageRating = currentTotalReviews > 0 ? totalRatingPoints / currentTotalReviews : 0;
   }
   
   // Round to 1 decimal place
-  this.averageRating = Math.round(this.averageRating * 10) / 10;
+  this.averageRating = Math.round((this.averageRating || 0) * 10) / 10;
   
   return this.save();
 };
 
 // Method to remove rating from statistics
 bookSchema.methods.removeRatingFromStats = async function (ratingToRemove: number) {
-  if (this.totalReviews > 0) {
-    const totalRatingPoints = this.averageRating * this.totalReviews - ratingToRemove;
-    this.totalReviews -= 1;
+  const currentTotalReviews = this.totalReviews || 0;
+  const currentAvgRating = this.averageRating || 0;
+  
+  if (currentTotalReviews > 0) {
+    const totalRatingPoints = currentAvgRating * currentTotalReviews - ratingToRemove;
+    this.totalReviews = currentTotalReviews - 1;
     this.averageRating = this.totalReviews > 0 ? totalRatingPoints / this.totalReviews : 0;
     
     // Round to 1 decimal place
-    this.averageRating = Math.round(this.averageRating * 10) / 10;
+    this.averageRating = Math.round((this.averageRating || 0) * 10) / 10;
   }
   
   return this.save();

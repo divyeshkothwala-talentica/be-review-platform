@@ -24,13 +24,6 @@ const reviewSchema = new Schema<IReview>(
       type: String,
       required: [true, 'Book ID is required'],
       ref: 'Book',
-      validate: {
-        validator: async function (bookId: string) {
-          const book = await Book.findById(bookId);
-          return !!book;
-        },
-        message: 'Referenced book does not exist',
-      },
     },
     userId: {
       type: String,
@@ -90,29 +83,30 @@ reviewSchema.virtual('user', {
 });
 
 // Pre-save middleware to update book rating statistics
-reviewSchema.pre('save', async function (next) {
-  try {
-    if (this.isNew) {
-      // New review - update book statistics
-      const book = await Book.findById(this.bookId);
-      if (book) {
-        await book.updateRatingStats(this.rating, true);
-      }
-    } else if (this.isModified('rating')) {
-      // Rating updated - recalculate book statistics
-      const originalReview = await mongoose.model('Review').findById(this._id);
-      if (originalReview) {
-        const book = await Book.findById(this.bookId);
-        if (book) {
-          await book.updateRatingStats(this.rating, false, originalReview.rating);
-        }
-      }
-    }
-    next();
-  } catch (error) {
-    next(error as Error);
-  }
-});
+// Temporarily disabled - moved to service layer to avoid race conditions
+// reviewSchema.pre('save', async function (next) {
+//   try {
+//     if (this.isNew) {
+//       // New review - update book statistics
+//       const book = await Book.findById(this.bookId);
+//       if (book) {
+//         await book.updateRatingStats(this.rating, true);
+//       }
+//     } else if (this.isModified('rating')) {
+//       // Rating updated - recalculate book statistics
+//       const originalReview = await mongoose.model('Review').findById(this._id);
+//       if (originalReview) {
+//         const book = await Book.findById(this.bookId);
+//         if (book) {
+//           await book.updateRatingStats(this.rating, false, originalReview.rating);
+//         }
+//       }
+//     }
+//     next();
+//   } catch (error) {
+//     next(error as Error);
+//   }
+// });
 
 // Post-remove middleware to update book rating statistics
 reviewSchema.post('findOneAndDelete', async function (doc) {

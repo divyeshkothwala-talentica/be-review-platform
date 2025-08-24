@@ -1,5 +1,4 @@
 import { Router } from 'express';
-import rateLimit from 'express-rate-limit';
 import { FavoritesController } from '../controllers/favoritesController';
 import { authenticateToken } from '../middleware/auth';
 import { favoritesValidation } from '../middleware/favoritesValidation';
@@ -21,13 +20,6 @@ router.use(authenticateToken);
  */
 router.get(
   '/',
-  rateLimit({
-    windowMs: 1 * 60 * 1000, // 1 minute
-    max: 60, // 60 requests per minute
-    message: 'Too many requests to get favorites',
-    standardHeaders: true,
-    legacyHeaders: false,
-  }),
   favoritesValidation.getUserFavorites,
   FavoritesController.getUserFavorites
 );
@@ -40,13 +32,6 @@ router.get(
  */
 router.post(
   '/',
-  rateLimit({
-    windowMs: 1 * 60 * 1000, // 1 minute
-    max: 30, // 30 add operations per minute
-    message: 'Too many requests to add favorites',
-    standardHeaders: true,
-    legacyHeaders: false,
-  }),
   favoritesValidation.addToFavorites,
   FavoritesController.addToFavorites
 );
@@ -59,13 +44,6 @@ router.post(
  */
 router.delete(
   '/:bookId',
-  rateLimit({
-    windowMs: 1 * 60 * 1000, // 1 minute
-    max: 30, // 30 remove operations per minute
-    message: 'Too many requests to remove favorites',
-    standardHeaders: true,
-    legacyHeaders: false,
-  }),
   favoritesValidation.removeFromFavorites,
   FavoritesController.removeFromFavorites
 );
@@ -78,13 +56,6 @@ router.delete(
  */
 router.get(
   '/check/:bookId',
-  rateLimit({
-    windowMs: 1 * 60 * 1000, // 1 minute
-    max: 100, // 100 check requests per minute
-    message: 'Too many requests to check favorite status',
-    standardHeaders: true,
-    legacyHeaders: false,
-  }),
   favoritesValidation.checkFavoriteStatus,
   FavoritesController.checkFavoriteStatus
 );
@@ -96,13 +67,6 @@ router.get(
  */
 router.get(
   '/stats',
-  rateLimit({
-    windowMs: 5 * 60 * 1000, // 5 minutes
-    max: 20, // 20 stats requests per 5 minutes
-    message: 'Too many requests to get favorites statistics',
-    standardHeaders: true,
-    legacyHeaders: false,
-  }),
   FavoritesController.getFavoritesStats
 );
 

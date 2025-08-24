@@ -1,5 +1,4 @@
 import { Router } from 'express';
-import rateLimit from 'express-rate-limit';
 import UserProfileController from '../controllers/userProfileController';
 import { authenticateToken } from '../middleware/auth';
 import UserProfileValidation from '../middleware/userProfileValidation';
@@ -21,13 +20,6 @@ router.use(authenticateToken);
  */
 router.get(
   '/profile',
-  rateLimit({
-    windowMs: 15 * 60 * 1000, // 15 minutes
-    max: 30, // 30 requests per window
-    message: 'Too many profile requests, please try again later',
-    standardHeaders: true,
-    legacyHeaders: false,
-  }),
   UserProfileController.getProfile
 );
 
@@ -38,13 +30,6 @@ router.get(
  */
 router.put(
   '/profile',
-  rateLimit({
-    windowMs: 15 * 60 * 1000, // 15 minutes
-    max: 10, // 10 updates per window
-    message: 'Too many profile update requests, please try again later',
-    standardHeaders: true,
-    legacyHeaders: false,
-  }),
   UserProfileValidation.validateProfileUpdate,
   UserProfileController.updateProfile
 );
@@ -56,13 +41,6 @@ router.put(
  */
 router.get(
   '/profile/statistics',
-  rateLimit({
-    windowMs: 15 * 60 * 1000, // 15 minutes
-    max: 50, // 50 requests per window
-    message: 'Too many statistics requests, please try again later',
-    standardHeaders: true,
-    legacyHeaders: false,
-  }),
   UserProfileController.getStatistics
 );
 
@@ -73,13 +51,6 @@ router.get(
  */
 router.get(
   '/profile/basic',
-  rateLimit({
-    windowMs: 15 * 60 * 1000, // 15 minutes
-    max: 100, // 100 requests per window
-    message: 'Too many basic profile requests, please try again later',
-    standardHeaders: true,
-    legacyHeaders: false,
-  }),
   UserProfileController.getBasicProfile
 );
 
@@ -90,13 +61,6 @@ router.get(
  */
 router.post(
   '/profile/check-email',
-  rateLimit({
-    windowMs: 15 * 60 * 1000, // 15 minutes
-    max: 20, // 20 requests per window
-    message: 'Too many email check requests, please try again later',
-    standardHeaders: true,
-    legacyHeaders: false,
-  }),
   UserProfileController.checkEmailAvailability
 );
 

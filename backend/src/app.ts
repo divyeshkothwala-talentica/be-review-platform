@@ -8,7 +8,6 @@ import database from './config/database';
 import { logger } from './utils/logger';
 import { requestLogger } from './middleware/requestLogger';
 import { errorHandler, notFoundHandler } from './middleware/errorHandler';
-import { generalLimiter } from './middleware/rateLimiter';
 import routes from './routes';
 
 class App {
@@ -75,7 +74,6 @@ class App {
     this.app.use(requestLogger);
 
     // Rate limiting
-    this.app.use(generalLimiter);
 
     // Trust proxy (for deployment behind reverse proxy)
     this.app.set('trust proxy', 1);

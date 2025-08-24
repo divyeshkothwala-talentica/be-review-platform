@@ -24,7 +24,9 @@
     "typecheck": "tsc --noEmit",
     "seed": "ts-node scripts/seed.ts seed",
     "seed:reset": "ts-node scripts/seed.ts reset",
-    "seed:clear": "ts-node scripts/seed.ts clear"
+    "seed:clear": "ts-node scripts/seed.ts clear",
+    "generate:testdata": "ts-node scripts/generateTestData.ts generate",
+    "clear:testdata": "ts-node scripts/generateTestData.ts clear"
   },
   "keywords": [
     "api",

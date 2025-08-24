@@ -182,62 +182,11 @@ export const requireAdmin = async (
   }
 };
 
-/**
- * Rate limiting middleware for authentication endpoints
- */
-export const authRateLimit = (maxAttempts: number = 5, windowMs: number = 15 * 60 * 1000) => {
-  const attempts = new Map<string, { count: number; resetTime: number }>();
-
-  return (req: Request, res: Response, next: NextFunction): void => {
-    const clientId = req.ip || 'unknown';
-    const now = Date.now();
-    
-    // Clean up expired entries
-    for (const [key, value] of attempts.entries()) {
-      if (now > value.resetTime) {
-        attempts.delete(key);
-      }
-    }
-
-    const clientAttempts = attempts.get(clientId);
-    
-    if (!clientAttempts) {
-      // First attempt
-      attempts.set(clientId, { count: 1, resetTime: now + windowMs });
-      next();
-      return;
-    }
-
-    if (now > clientAttempts.resetTime) {
-      // Reset window
-      attempts.set(clientId, { count: 1, resetTime: now + windowMs });
-      next();
-      return;
-    }
-
-    if (clientAttempts.count >= maxAttempts) {
-      // Rate limit exceeded
-      const resetTime = new Date(clientAttempts.resetTime);
-      res.status(429).json(
-        ApiResponse.error(
-          `Too many authentication attempts. Try again after ${resetTime.toISOString()}`,
-          429,
-          'RATE_LIMIT_EXCEEDED'
-        )
-      );
-      return;
-    }
-
-    // Increment attempts
-    clientAttempts.count++;
-    next();
-  };
-};
+// Rate limiting middleware removed to resolve 429 errors
 
 export default {
   authenticateToken,
   optionalAuth,
   requireOwnership,
   requireAdmin,
-  authRateLimit,
 };

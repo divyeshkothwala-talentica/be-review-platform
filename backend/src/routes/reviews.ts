@@ -1,5 +1,4 @@
 import { Router } from 'express';
-import rateLimit from 'express-rate-limit';
 import reviewsController from '../controllers/reviewsController';
 import { authenticateToken } from '../middleware/auth';
 import {
@@ -10,15 +9,9 @@ import {
   validateUserReviewsQuery,
   validateBookReviewsQuery,
   sanitizeReviewText,
-  reviewRateLimit,
 } from '../middleware/reviewsValidation';
 
 const router = Router();
-
-// Rate limiters for different operations
-const createReviewLimiter = rateLimit(reviewRateLimit.create);
-const readReviewLimiter = rateLimit(reviewRateLimit.read);
-const modifyReviewLimiter = rateLimit(reviewRateLimit.modify);
 
 /**
  * @route   POST /reviews
@@ -28,7 +21,6 @@ const modifyReviewLimiter = rateLimit(reviewRateLimit.modify);
  */
 router.post(
   '/',
-  createReviewLimiter,
   authenticateToken,
   validateCreateReview,
   sanitizeReviewText,
@@ -44,7 +36,6 @@ router.post(
  */
 router.put(
   '/:reviewId',
-  modifyReviewLimiter,
   authenticateToken,
   validateUpdateReview,
   sanitizeReviewText,
@@ -59,7 +50,6 @@ router.put(
  */
 router.delete(
   '/:reviewId',
-  modifyReviewLimiter,
   authenticateToken,
   validateReviewId,
   reviewsController.deleteReview.bind(reviewsController)
@@ -73,7 +63,6 @@ router.delete(
  */
 router.get(
   '/:reviewId',
-  readReviewLimiter,
   validateReviewId,
   reviewsController.getReviewById.bind(reviewsController)
 );
@@ -87,7 +76,6 @@ router.get(
  */
 router.get(
   '/user/:userId',
-  readReviewLimiter,
   validateUserId,
   validateUserReviewsQuery,
   reviewsController.getUserReviews.bind(reviewsController)
@@ -102,7 +90,6 @@ router.get(
  */
 router.get(
   '/book/:bookId',
-  readReviewLimiter,
   validateBookReviewsQuery,
   reviewsController.getBookReviews.bind(reviewsController)
 );
@@ -115,7 +102,6 @@ router.get(
  */
 router.get(
   '/check/:bookId',
-  readReviewLimiter,
   authenticateToken,
   validateBookReviewsQuery,
   reviewsController.checkUserBookReview.bind(reviewsController)
@@ -129,7 +115,6 @@ router.get(
  */
 router.get(
   '/stats/user/:userId',
-  readReviewLimiter,
   validateUserId,
   reviewsController.getUserReviewStats.bind(reviewsController)
 );

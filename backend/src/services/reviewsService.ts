@@ -69,6 +69,9 @@ export class ReviewsService {
       const review = new Review(reviewData);
       await review.save();
 
+      // Update book rating statistics
+      await book.updateRatingStats(reviewData.rating, true);
+
       // Populate user and book information
       await review.populate('user', 'name');
       await review.populate('book', 'title author coverImageUrl');
@@ -103,6 +106,9 @@ export class ReviewsService {
         throw new Error('You can only update your own reviews');
       }
 
+      // Store old rating for book statistics update
+      const oldRating = review.rating;
+      
       // Update the review
       if (updateData.text !== undefined) {
         review.text = updateData.text;
@@ -112,6 +118,14 @@ export class ReviewsService {
       }
 
       await review.save();
+
+      // Update book statistics if rating changed
+      if (updateData.rating !== undefined && updateData.rating !== oldRating) {
+        const book = await Book.findById(review.bookId);
+        if (book) {
+          await book.updateRatingStats(updateData.rating, false, oldRating);
+        }
+      }
 
       // Populate user and book information
       await review.populate('user', 'name');
