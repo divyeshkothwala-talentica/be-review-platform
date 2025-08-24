@@ -1,0 +1,431 @@
+name: Infrastructure Deployment
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+    paths:
+      - 'terraform/**'
+      - '.github/workflows/infrastructure.yml'
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'terraform/**'
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to deploy'
+        required: true
+        default: 'dev'
+        type: choice
+        options:
+          - dev
+          - staging
+          - prod
+      action:
+        description: 'Terraform action'
+        required: true
+        default: 'plan'
+        type: choice
+        options:
+          - plan
+          - apply
+          - destroy
+
+env:
+  TF_VERSION: '1.6.0'
+  AWS_REGION: 'us-east-1'
+
+jobs:
+  terraform-validate:
+    name: Validate Terraform
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Terraform Format Check
+        run: |
+          cd terraform
+          terraform fmt -check -recursive
+
+      - name: Terraform Init
+        run: |
+          cd terraform
+          terraform init -backend=false
+
+      - name: Terraform Validate
+        run: |
+          cd terraform
+          terraform validate
+
+  terraform-plan-dev:
+    name: Plan Development
+    runs-on: ubuntu-latest
+    needs: terraform-validate
+    if: github.ref == 'refs/heads/develop' || (github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'dev')
+    environment: development
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Terraform Init
+        run: |
+          cd terraform
+          terraform init
+
+      - name: Select Terraform Workspace
+        run: |
+          cd terraform
+          terraform workspace select dev || terraform workspace new dev
+
+      - name: Terraform Plan
+        run: |
+          cd terraform
+          terraform plan \
+            -var-file="environments/dev/terraform.tfvars" \
+            -var="mongodb_uri=${{ secrets.DEV_MONGODB_URI }}" \
+            -var="jwt_secret=${{ secrets.DEV_JWT_SECRET }}" \
+            -var="openai_api_key=${{ secrets.OPENAI_API_KEY }}" \
+            -out=tfplan
+
+      - name: Upload Plan
+        uses: actions/upload-artifact@v4
+        with:
+          name: terraform-plan-dev
+          path: terraform/tfplan
+          retention-days: 5
+
+  terraform-apply-dev:
+    name: Apply Development
+    runs-on: ubuntu-latest
+    needs: terraform-plan-dev
+    if: (github.ref == 'refs/heads/develop' && github.event_name == 'push') || (github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'dev' && github.event.inputs.action == 'apply')
+    environment: development
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Download Plan
+        uses: actions/download-artifact@v4
+        with:
+          name: terraform-plan-dev
+          path: terraform/
+
+      - name: Terraform Init
+        run: |
+          cd terraform
+          terraform init
+
+      - name: Select Terraform Workspace
+        run: |
+          cd terraform
+          terraform workspace select dev
+
+      - name: Terraform Apply
+        run: |
+          cd terraform
+          terraform apply tfplan
+
+      - name: Save Terraform Outputs
+        run: |
+          cd terraform
+          terraform output -json > environments/dev/terraform-outputs.json
+
+      - name: Upload Outputs
+        uses: actions/upload-artifact@v4
+        with:
+          name: terraform-outputs-dev
+          path: terraform/environments/dev/terraform-outputs.json
+          retention-days: 30
+
+  terraform-plan-staging:
+    name: Plan Staging
+    runs-on: ubuntu-latest
+    needs: terraform-validate
+    if: github.ref == 'refs/heads/main' || (github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'staging')
+    environment: staging
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Terraform Init
+        run: |
+          cd terraform
+          terraform init
+
+      - name: Select Terraform Workspace
+        run: |
+          cd terraform
+          terraform workspace select staging || terraform workspace new staging
+
+      - name: Terraform Plan
+        run: |
+          cd terraform
+          terraform plan \
+            -var-file="environments/staging/terraform.tfvars" \
+            -var="mongodb_uri=${{ secrets.STAGING_MONGODB_URI }}" \
+            -var="jwt_secret=${{ secrets.STAGING_JWT_SECRET }}" \
+            -var="openai_api_key=${{ secrets.OPENAI_API_KEY }}" \
+            -out=tfplan
+
+      - name: Upload Plan
+        uses: actions/upload-artifact@v4
+        with:
+          name: terraform-plan-staging
+          path: terraform/tfplan
+          retention-days: 5
+
+  terraform-apply-staging:
+    name: Apply Staging
+    runs-on: ubuntu-latest
+    needs: terraform-plan-staging
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'staging' && github.event.inputs.action == 'apply'
+    environment: staging
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Download Plan
+        uses: actions/download-artifact@v4
+        with:
+          name: terraform-plan-staging
+          path: terraform/
+
+      - name: Terraform Init
+        run: |
+          cd terraform
+          terraform init
+
+      - name: Select Terraform Workspace
+        run: |
+          cd terraform
+          terraform workspace select staging
+
+      - name: Terraform Apply
+        run: |
+          cd terraform
+          terraform apply tfplan
+
+      - name: Save Terraform Outputs
+        run: |
+          cd terraform
+          terraform output -json > environments/staging/terraform-outputs.json
+
+      - name: Upload Outputs
+        uses: actions/upload-artifact@v4
+        with:
+          name: terraform-outputs-staging
+          path: terraform/environments/staging/terraform-outputs.json
+          retention-days: 30
+
+  terraform-plan-prod:
+    name: Plan Production
+    runs-on: ubuntu-latest
+    needs: terraform-validate
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'prod'
+    environment: production
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Terraform Init
+        run: |
+          cd terraform
+          terraform init
+
+      - name: Select Terraform Workspace
+        run: |
+          cd terraform
+          terraform workspace select prod || terraform workspace new prod
+
+      - name: Terraform Plan
+        run: |
+          cd terraform
+          terraform plan \
+            -var-file="environments/prod/terraform.tfvars" \
+            -var="mongodb_uri=${{ secrets.PROD_MONGODB_URI }}" \
+            -var="jwt_secret=${{ secrets.PROD_JWT_SECRET }}" \
+            -var="openai_api_key=${{ secrets.OPENAI_API_KEY }}" \
+            -out=tfplan
+
+      - name: Upload Plan
+        uses: actions/upload-artifact@v4
+        with:
+          name: terraform-plan-prod
+          path: terraform/tfplan
+          retention-days: 5
+
+  terraform-apply-prod:
+    name: Apply Production
+    runs-on: ubuntu-latest
+    needs: terraform-plan-prod
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'prod' && github.event.inputs.action == 'apply'
+    environment: production
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Download Plan
+        uses: actions/download-artifact@v4
+        with:
+          name: terraform-plan-prod
+          path: terraform/
+
+      - name: Terraform Init
+        run: |
+          cd terraform
+          terraform init
+
+      - name: Select Terraform Workspace
+        run: |
+          cd terraform
+          terraform workspace select prod
+
+      - name: Terraform Apply
+        run: |
+          cd terraform
+          terraform apply tfplan
+
+      - name: Save Terraform Outputs
+        run: |
+          cd terraform
+          terraform output -json > environments/prod/terraform-outputs.json
+
+      - name: Upload Outputs
+        uses: actions/upload-artifact@v4
+        with:
+          name: terraform-outputs-prod
+          path: terraform/environments/prod/terraform-outputs.json
+          retention-days: 30
+
+      - name: Notify Production Deployment
+        if: success()
+        run: |
+          echo "🚀 Production infrastructure deployed successfully!"
+          echo "Please verify all services are running correctly."
+
+  terraform-destroy:
+    name: Destroy Infrastructure
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.action == 'destroy'
+    environment: ${{ github.event.inputs.environment }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Terraform Init
+        run: |
+          cd terraform
+          terraform init
+
+      - name: Select Terraform Workspace
+        run: |
+          cd terraform
+          terraform workspace select ${{ github.event.inputs.environment }}
+
+      - name: Terraform Destroy
+        run: |
+          cd terraform
+          terraform destroy \
+            -var-file="environments/${{ github.event.inputs.environment }}/terraform.tfvars" \
+            -var="mongodb_uri=dummy" \
+            -var="jwt_secret=dummy" \
+            -var="openai_api_key=dummy" \
+            -auto-approve
+
+      - name: Notify Destruction
+        if: success()
+        run: |
+          echo "💥 Infrastructure destroyed for ${{ github.event.inputs.environment }} environment"

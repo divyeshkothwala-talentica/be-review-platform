@@ -1,0 +1,68 @@
+# Production Environment Configuration
+# Book Review Platform - Production Environment
+
+# General Configuration
+environment = "prod"
+aws_region  = "us-east-1"
+
+# Networking Configuration
+vpc_cidr = "10.2.0.0/16"
+
+# EC2 Configuration
+instance_type = "t3.medium"
+key_pair_name = "" # Add your key pair name here
+
+# Security Configuration
+ssh_allowed_ips = ["YOUR_OFFICE_IP/32"] # Replace with your office/admin IP
+
+# Load Balancer Configuration
+enable_load_balancer = true
+enable_elastic_ip    = true
+
+# Monitoring Configuration
+enable_cloudwatch_logs = true
+log_retention_days     = 30
+enable_monitoring      = true
+
+# Backup Configuration
+enable_ebs_backup     = true
+backup_retention_days = 30
+
+# Application Configuration
+# Note: These MUST be set via environment variables or AWS Secrets Manager for production
+# mongodb_uri    = "mongodb+srv://username:password@cluster.mongodb.net/bookreviews_prod"
+# jwt_secret     = "your-production-jwt-secret-key-very-secure"
+# openai_api_key = "your-openai-api-key"
+
+# GitHub Configuration
+# github_repo   = "your-username/be-review-platform"
+# github_branch = "main"
+
+# Scaling Configuration
+enable_auto_scaling = true
+min_instances       = 2
+max_instances       = 5
+desired_instances   = 2
+
+# Security Configuration
+enable_waf        = true
+enable_ssl        = true
+enable_encryption = true
+
+# Node.js Configuration
+node_version  = "18"
+pm2_instances = 4
+
+# DNS Configuration
+# domain_name      = "api.yourdomain.com"
+# route53_zone_id  = "Z1234567890ABC"
+
+# Cost Optimization
+enable_spot_instances = false # Keep false for production stability
+
+# Systems Management
+enable_ssm_patching = true
+
+# Development Tools (disabled for production)
+enable_dev_tools  = false
+enable_ssh_access = true # Keep true for emergency access

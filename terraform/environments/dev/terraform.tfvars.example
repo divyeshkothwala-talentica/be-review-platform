@@ -1,0 +1,49 @@
+# Development Environment Configuration
+# Book Review Platform - Development Environment
+
+# General Configuration
+environment = "dev"
+aws_region  = "us-east-1"
+
+# Networking Configuration
+vpc_cidr = "10.0.0.0/16"
+
+# EC2 Configuration
+instance_type = "t3.micro"
+key_pair_name = "" # Add your key pair name here
+
+# Security Configuration
+ssh_allowed_ips = ["0.0.0.0/0"] # Replace with your IP for security: ["YOUR_IP/32"]
+
+# Load Balancer Configuration (disabled for dev)
+enable_load_balancer = false
+enable_elastic_ip    = true
+
+# Monitoring Configuration (minimal for dev)
+enable_cloudwatch_logs = true
+log_retention_days     = 3
+
+# Backup Configuration (disabled for dev)
+enable_ebs_backup = false
+
+# Application Configuration
+# Note: These should be set via environment variables or AWS Secrets Manager
+# mongodb_uri    = "mongodb+srv://username:password@cluster.mongodb.net/bookreviews_dev"
+# jwt_secret     = "your-dev-jwt-secret-key"
+# openai_api_key = "your-openai-api-key"
+
+# GitHub Configuration (optional for automated deployment)
+# github_repo   = "your-username/be-review-platform"
+# github_branch = "develop"
+
+# Cost Optimization
+enable_spot_instances = false
+enable_auto_scaling   = false
+
+# Development Tools
+enable_dev_tools  = true
+enable_ssh_access = true
+
+# Node.js Configuration
+node_version  = "18"
+pm2_instances = 1
