@@ -1,12 +1,13 @@
-name: Deploy Without Tests
+name: Deploy Without Tests (DISABLED)
 
 on:
-  push:
-    branches:
-      - main
-    paths:
-      - 'backend/**'
-      - '.github/workflows/deploy-no-tests.yml'
+  # Disabled to prevent conflicts with deploy-application.yml
+  # push:
+  #   branches:
+  #     - main
+  #   paths:
+  #     - 'backend/**'
+  #     - '.github/workflows/deploy-no-tests.yml'
   workflow_dispatch:
     inputs:
       environment:
