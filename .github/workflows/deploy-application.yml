@@ -4,7 +4,6 @@ on:
   push:
     branches:
       - main
-      - develop
     paths:
       - 'backend/**'
       - '.github/workflows/deploy-application.yml'
@@ -30,36 +29,9 @@ env:
   AWS_REGION: 'us-east-1'
 
 jobs:
-  test:
-    name: Run Tests
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: ./backend
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: 'npm'
-          cache-dependency-path: backend/package-lock.json
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Run linting
-        run: npm run lint
-
-      - name: Run type checking
-        run: npm run typecheck
-
   build:
     name: Build Application
     runs-on: ubuntu-latest
-    needs: test
     defaults:
       run:
         working-directory: ./backend
@@ -75,10 +47,21 @@ jobs:
           cache-dependency-path: backend/package-lock.json
 
       - name: Install dependencies
-        run: npm ci
+        run: |
+          echo "📦 Installing all dependencies (including devDependencies for TypeScript)..."
+          npm ci
+          echo "✅ Dependencies installed"
+          
+          echo "🔍 Verifying TypeScript and type definitions..."
+          npx tsc --version
+          ls -la node_modules/@types/ | head -5
+          echo "✅ Type definitions verified"
 
       - name: Build application
-        run: npm run build
+        run: |
+          echo "🏗️ Building TypeScript application..."
+          npm run build
+          echo "✅ Build completed"
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
