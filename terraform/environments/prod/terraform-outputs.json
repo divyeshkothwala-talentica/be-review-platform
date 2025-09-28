@@ -1,0 +1,22 @@
+{
+  "instance_public_ip": {
+    "value": "44.194.207.22",
+    "type": "string"
+  },
+  "instance_id": {
+    "value": "i-existing-instance",
+    "type": "string"
+  },
+  "vpc_id": {
+    "value": "vpc-existing",
+    "type": "string"
+  },
+  "security_group_id": {
+    "value": "sg-existing",
+    "type": "string"
+  },
+  "application_url": {
+    "value": "https://44.194.207.22",
+    "type": "string"
+  }
+}

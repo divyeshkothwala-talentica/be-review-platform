@@ -143,12 +143,62 @@ jobs:
       - name: Deploy application
         if: ${{ !github.event.inputs.rollback }}
         run: |
-          chmod +x terraform/scripts/deploy-application.sh
-          ./terraform/scripts/deploy-application.sh \
-            -e prod \
-            -r ${{ github.repository }} \
-            -b ${{ github.ref_name }} \
-            -k ~/.ssh/deploy_key
+          echo "🚀 Starting deployment to existing infrastructure..."
+          
+          INSTANCE_IP="${{ steps.find-instance.outputs.instance_ip }}"
+          
+          echo "📦 Deploying to $INSTANCE_IP via SSH..."
+          
+          # Simple deployment via SSH
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no ec2-user@$INSTANCE_IP << 'DEPLOY_SCRIPT'
+          set -e
+          
+          echo "📦 Updating application on server..."
+          
+          # Navigate to app directory (create if doesn't exist)
+          sudo mkdir -p /opt/book-review-api
+          cd /opt/book-review-api
+          
+          # Backup current version if exists
+          if [ -d current ]; then
+            sudo rm -rf backup 2>/dev/null || true
+            sudo mv current backup 2>/dev/null || true
+          fi
+          
+          # Clone latest code
+          echo "📥 Cloning latest code..."
+          sudo git clone https://github.com/${{ github.repository }}.git current || {
+            echo "Git clone failed, trying to update existing repo..."
+            cd current
+            sudo git fetch origin
+            sudo git reset --hard origin/${{ github.ref_name }}
+          }
+          
+          cd current/backend
+          
+          # Install dependencies and build
+          echo "🏗️ Installing dependencies and building..."
+          sudo npm ci
+          sudo npm run build
+          
+          # Restart application (try multiple methods)
+          echo "🔄 Restarting application..."
+          
+          # Try PM2 restart
+          sudo pm2 restart all 2>/dev/null || echo "PM2 restart failed or not running"
+          
+          # Try systemd restart
+          sudo systemctl restart book-review-api 2>/dev/null || echo "Systemd restart failed or not configured"
+          
+          # Try direct node restart (fallback)
+          sudo pkill -f "node.*app.js" 2>/dev/null || true
+          sleep 3
+          cd dist
+          sudo nohup node app.js > /var/log/book-review-api.log 2>&1 &
+          
+          echo "✅ Deployment completed successfully"
+          
+          DEPLOY_SCRIPT
 
       - name: Rollback application
         if: ${{ github.event.inputs.rollback }}
