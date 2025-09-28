@@ -59,11 +59,39 @@ jobs:
         run: |
           echo "🚀 Deploying to production server at ${{ env.INSTANCE_IP }}..."
           
-          # Setup SSH key
+          # Setup SSH key with proper formatting
           mkdir -p ~/.ssh
-          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/deploy_key
+          chmod 700 ~/.ssh
+          
+          # Write SSH private key and ensure proper format
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" | tr -d '\r' > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
+          
+          # Verify key format
+          echo "🔍 Verifying SSH key format..."
+          if ssh-keygen -l -f ~/.ssh/deploy_key; then
+            echo "✅ SSH key format is valid"
+          else
+            echo "❌ SSH key format is invalid"
+            echo "Please ensure SSH_PRIVATE_KEY secret contains a valid private key"
+            exit 1
+          fi
+          
+          # Add server to known hosts
           ssh-keyscan -H ${{ env.INSTANCE_IP }} >> ~/.ssh/known_hosts
+          
+          # Test SSH connection
+          echo "🔍 Testing SSH connection..."
+          if ssh -i ~/.ssh/deploy_key -o ConnectTimeout=10 -o StrictHostKeyChecking=no ec2-user@${{ env.INSTANCE_IP }} "echo 'SSH connection successful'"; then
+            echo "✅ SSH connection test passed"
+          else
+            echo "❌ SSH connection test failed"
+            echo "Please verify:"
+            echo "1. SSH_PRIVATE_KEY secret is correctly configured"
+            echo "2. The corresponding public key is added to ec2-user@${{ env.INSTANCE_IP }}:~/.ssh/authorized_keys"
+            echo "3. The EC2 instance security group allows SSH access from GitHub Actions IPs"
+            exit 1
+          fi
           
           # Deploy via SSH
           ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no ec2-user@${{ env.INSTANCE_IP }} << 'DEPLOY_SCRIPT'
