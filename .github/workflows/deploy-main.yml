@@ -1,0 +1,337 @@
+name: Deploy to Production
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'backend/**'
+      - '.github/workflows/deploy-main.yml'
+
+env:
+  NODE_VERSION: '18'
+  INSTANCE_IP: '44.194.207.22'
+  APP_DIR: '/opt/book-review-api'
+
+jobs:
+  deploy:
+    name: Deploy Application to Production
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./backend
+
+    steps:
+      - name: 🚀 Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: 🔧 Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: backend/package-lock.json
+
+      - name: 📦 Install Dependencies
+        run: npm ci
+
+      - name: 🔍 TypeScript Compile Check
+        run: |
+          echo "🔍 Checking for TypeScript compile errors..."
+          npm run typecheck
+          echo "✅ No compile errors found"
+
+      - name: 🧹 Lint Check
+        run: |
+          echo "🔍 Checking for linting issues..."
+          npm run lint
+          echo "✅ No linting issues found"
+
+      - name: 🏗️ Build Application
+        run: |
+          echo "🏗️ Building application..."
+          npm run build
+          echo "✅ Build completed successfully"
+
+      - name: 🔐 Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-1
+
+      - name: 🔍 Get EC2 Instance ID
+        id: get-instance
+        run: |
+          echo "🔍 Finding EC2 instance ID for IP ${{ env.INSTANCE_IP }}..."
+          
+          INSTANCE_ID=$(aws ec2 describe-instances \
+            --filters "Name=instance-state-name,Values=running" \
+                      "Name=network-interface.association.public-ip,Values=${{ env.INSTANCE_IP }}" \
+            --query 'Reservations[0].Instances[0].InstanceId' \
+            --output text 2>/dev/null || echo "None")
+          
+          if [ "$INSTANCE_ID" = "None" ] || [ "$INSTANCE_ID" = "null" ] || [ -z "$INSTANCE_ID" ]; then
+            echo "❌ Could not find running instance with IP ${{ env.INSTANCE_IP }}"
+            exit 1
+          fi
+          
+          echo "✅ Found instance ID: $INSTANCE_ID"
+          echo "instance_id=$INSTANCE_ID" >> $GITHUB_OUTPUT
+
+      - name: 🔍 Check SSM Agent Status
+        id: check-ssm
+        run: |
+          INSTANCE_ID="${{ steps.get-instance.outputs.instance_id }}"
+          echo "🔍 Checking SSM agent status for instance: $INSTANCE_ID"
+          
+          SSM_STATUS=$(aws ssm describe-instance-information \
+            --filters "Key=InstanceIds,Values=$INSTANCE_ID" \
+            --query 'InstanceInformationList[0].PingStatus' \
+            --output text 2>/dev/null || echo "NotFound")
+          
+          echo "SSM Status: $SSM_STATUS"
+          
+          if [ "$SSM_STATUS" = "Online" ]; then
+            echo "✅ SSM agent is online and ready"
+            echo "ssm_available=true" >> $GITHUB_OUTPUT
+          else
+            echo "❌ SSM agent is not available"
+            echo "ssm_available=false" >> $GITHUB_OUTPUT
+            exit 1
+          fi
+
+      - name: 🚀 Deploy Application via SSM
+        run: |
+          echo "🚀 Deploying to production server via AWS Systems Manager..."
+          
+          INSTANCE_ID="${{ steps.get-instance.outputs.instance_id }}"
+          echo "Instance ID: $INSTANCE_ID"
+          
+          # Execute deployment via Systems Manager with inline commands
+          echo "🔧 Executing deployment commands via Systems Manager..."
+          COMMAND_ID=$(aws ssm send-command \
+            --instance-ids "$INSTANCE_ID" \
+            --document-name "AWS-RunShellScript" \
+            --parameters 'commands=[
+              "echo \"📦 Starting deployment process...\"",
+              "APP_DIR=\"/opt/book-review-api\"",
+              "CURRENT_DIR=\"$APP_DIR/current\"",
+              "BACKUP_DIR=\"$APP_DIR/backup-$(date +%Y%m%d-%H%M%S)\"",
+              "sudo mkdir -p $APP_DIR",
+              "if [ -d \"$CURRENT_DIR\" ]; then echo \"📋 Backing up current deployment...\"; sudo mv \"$CURRENT_DIR\" \"$BACKUP_DIR\"; fi",
+              "echo \"📥 Cloning repository...\"",
+              "cd $APP_DIR",
+              "sudo git clone https://github.com/${{ github.repository }}.git current",
+              "cd current/backend",
+              "echo \"📦 Installing dependencies...\"",
+              "sudo npm ci --production=false",
+              "echo \"🏗️ Building application...\"",
+              "sudo npm run build",
+              "echo \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\" | sudo tee build-timestamp.txt",
+              "echo \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\" | sudo tee deployment-timestamp.txt",
+              "echo \"🔧 Setting up environment...\"",
+              "sudo tee .env << \"ENV_EOF\"",
+              "PORT=5000",
+              "NODE_ENV=production",
+              "API_VERSION=v1",
+              "CORS_ORIGIN=https://d157ilt95f9lq6.cloudfront.net",
+              "JWT_SECRET=your-super-secret-jwt-key-change-in-production-2024-070b21e6e6b3b61aaae655c35f2105ca",
+              "JWT_EXPIRES_IN=24h",
+              "RATE_LIMIT_WINDOW_MS=60000",
+              "RATE_LIMIT_MAX_REQUESTS=100",
+              "LOG_LEVEL=info",
+              "MONGO_URI=mongodb://localhost:27017/book_review_platform",
+              "MONGO_MAX_POOL_SIZE=10",
+              "MONGO_SERVER_SELECTION_TIMEOUT_MS=5000",
+              "MONGO_SOCKET_TIMEOUT_MS=45000",
+              "OPENAI_API_KEY=your-openai-api-key-here",
+              "OPENAI_MODEL=gpt-3.5-turbo",
+              "OPENAI_MAX_TOKENS=1000",
+              "OPENAI_TEMPERATURE=0.7",
+              "ENV_EOF",
+              "echo \"🔄 Stopping existing application...\"",
+              "sudo pkill -f \"node.*app.js\" 2>/dev/null || true",
+              "sudo pkill -f \"npm.*start\" 2>/dev/null || true",
+              "sleep 5",
+              "echo \"🚀 Starting application...\"",
+              "cd dist",
+              "sudo nohup node app.js > /var/log/book-review-api.log 2>&1 &",
+              "sleep 10",
+              "if pgrep -f \"node.*app.js\" > /dev/null; then echo \"✅ Application started successfully\"; echo \"Process ID: $(pgrep -f node.*app.js)\"; else echo \"❌ Application failed to start\"; sudo tail -20 /var/log/book-review-api.log; exit 1; fi",
+              "echo \"🔍 Testing local connectivity...\"",
+              "sleep 5",
+              "if curl -s -k -f https://localhost:5000/health > /dev/null; then echo \"✅ Local HTTPS health check passed\"; elif curl -s -f http://localhost:5000/health > /dev/null; then echo \"✅ Local HTTP health check passed\"; else echo \"❌ Local health check failed\"; sudo tail -20 /var/log/book-review-api.log; exit 1; fi",
+              "echo \"🔧 Setting up HTTPS reverse proxy...\"",
+              "sudo dnf install -y nginx",
+              "sudo mkdir -p /etc/nginx/ssl",
+              "sudo openssl req -x509 -nodes -days 365 -newkey rsa:2048 -keyout /etc/nginx/ssl/backend.key -out /etc/nginx/ssl/backend.crt -subj \"/C=US/ST=State/L=City/O=Organization/CN=44.194.207.22\"",
+              "sudo chmod 600 /etc/nginx/ssl/backend.key",
+              "sudo chmod 644 /etc/nginx/ssl/backend.crt",
+              "sudo tee /etc/nginx/conf.d/backend-api.conf << 'NGINX_EOF'",
+              "server {",
+              "    listen 443 ssl http2;",
+              "    server_name 44.194.207.22;",
+              "    ssl_certificate /etc/nginx/ssl/backend.crt;",
+              "    ssl_certificate_key /etc/nginx/ssl/backend.key;",
+              "    ssl_protocols TLSv1.2 TLSv1.3;",
+              "    add_header Access-Control-Allow-Origin \"https://d157ilt95f9lq6.cloudfront.net\" always;",
+              "    add_header Access-Control-Allow-Methods \"GET, POST, PUT, DELETE, OPTIONS\" always;",
+              "    add_header Access-Control-Allow-Headers \"Origin, X-Requested-With, Content-Type, Accept, Authorization, X-API-Version\" always;",
+              "    add_header Access-Control-Allow-Credentials \"true\" always;",
+              "    location / {",
+              "        proxy_pass http://127.0.0.1:5000;",
+              "        proxy_set_header Host \\$host;",
+              "        proxy_set_header X-Real-IP \\$remote_addr;",
+              "        proxy_set_header X-Forwarded-For \\$proxy_add_x_forwarded_for;",
+              "        proxy_set_header X-Forwarded-Proto \\$scheme;",
+              "    }",
+              "}",
+              "server {",
+              "    listen 5000 ssl http2;",
+              "    server_name 44.194.207.22;",
+              "    ssl_certificate /etc/nginx/ssl/backend.crt;",
+              "    ssl_certificate_key /etc/nginx/ssl/backend.key;",
+              "    ssl_protocols TLSv1.2 TLSv1.3;",
+              "    add_header Access-Control-Allow-Origin \"https://d157ilt95f9lq6.cloudfront.net\" always;",
+              "    add_header Access-Control-Allow-Methods \"GET, POST, PUT, DELETE, OPTIONS\" always;",
+              "    add_header Access-Control-Allow-Headers \"Origin, X-Requested-With, Content-Type, Accept, Authorization, X-API-Version\" always;",
+              "    add_header Access-Control-Allow-Credentials \"true\" always;",
+              "    location / {",
+              "        proxy_pass http://127.0.0.1:5000;",
+              "        proxy_set_header Host \\$host;",
+              "        proxy_set_header X-Real-IP \\$remote_addr;",
+              "        proxy_set_header X-Forwarded-For \\$proxy_add_x_forwarded_for;",
+              "        proxy_set_header X-Forwarded-Proto \\$scheme;",
+              "    }",
+              "}",
+              "NGINX_EOF",
+              "sudo nginx -t",
+              "sudo systemctl enable nginx",
+              "sudo systemctl start nginx",
+              "if systemctl is-active --quiet firewalld; then sudo firewall-cmd --permanent --add-service=https; sudo firewall-cmd --reload; fi",
+              "echo \"✅ HTTPS reverse proxy configured\"",
+              "echo \"✅ Deployment completed successfully!\""
+            ]' \
+            --query 'Command.CommandId' \
+            --output text)
+          
+          echo "Command ID: $COMMAND_ID"
+          
+          # Wait for command completion
+          echo "⏳ Waiting for deployment to complete..."
+          for i in {1..120}; do
+            STATUS=$(aws ssm get-command-invocation \
+              --command-id "$COMMAND_ID" \
+              --instance-id "$INSTANCE_ID" \
+              --query 'Status' \
+              --output text 2>/dev/null || echo "InProgress")
+            
+            echo "Status: $STATUS (attempt $i/120)"
+            
+            if [ "$STATUS" = "Success" ]; then
+              echo "✅ Deployment completed successfully!"
+              break
+            elif [ "$STATUS" = "Failed" ] || [ "$STATUS" = "Cancelled" ] || [ "$STATUS" = "TimedOut" ]; then
+              echo "❌ Deployment failed with status: $STATUS"
+              echo "Error output:"
+              aws ssm get-command-invocation \
+                --command-id "$COMMAND_ID" \
+                --instance-id "$INSTANCE_ID" \
+                --query 'StandardErrorContent' \
+                --output text
+              exit 1
+            fi
+            
+            sleep 5
+          done
+          
+          # Get command output
+          echo "📋 Deployment output:"
+          aws ssm get-command-invocation \
+            --command-id "$COMMAND_ID" \
+            --instance-id "$INSTANCE_ID" \
+            --query 'StandardOutputContent' \
+            --output text
+
+      - name: 🔍 Verify External Connectivity
+        run: |
+          echo "🔍 Verifying external HTTPS connectivity..."
+          sleep 15
+          
+          # Test external HTTPS connectivity (with self-signed certificate)
+          echo "Testing external HTTPS health endpoint..."
+          
+          for i in {1..10}; do
+            echo "Attempt $i/10..."
+            
+            # Test HTTPS with -k flag to ignore self-signed certificate errors
+            # Try standard HTTPS port 443 first, then port 5000
+            if curl -s -k -f -m 10 https://${{ env.INSTANCE_IP }}/health > /dev/null; then
+              echo "✅ External HTTPS connectivity test passed (port 443)!"
+              
+              # Get health response
+              HEALTH_RESPONSE=$(curl -s -k -m 10 https://${{ env.INSTANCE_IP }}/health)
+              echo "📋 Health Response:"
+              echo "$HEALTH_RESPONSE" | jq '.' 2>/dev/null || echo "$HEALTH_RESPONSE"
+              
+              echo "🎉 Deployment successful!"
+              echo "🌐 Primary Application URL: https://${{ env.INSTANCE_IP }}"
+              echo "🌐 Alternative URL: https://${{ env.INSTANCE_IP }}:5000"
+              echo "🔗 Health check: https://${{ env.INSTANCE_IP }}/health"
+              echo "📊 API endpoints: https://${{ env.INSTANCE_IP }}/api/v1/"
+              echo ""
+              echo "⚠️  Note: Self-signed certificate requires browser acceptance:"
+              echo "   1. Visit https://${{ env.INSTANCE_IP }} in browser"
+              echo "   2. Click 'Advanced' → 'Proceed to ${{ env.INSTANCE_IP }} (unsafe)'"
+              echo "   3. Then use the application normally"
+              exit 0
+            elif curl -s -k -f -m 10 https://${{ env.INSTANCE_IP }}:5000/health > /dev/null; then
+              echo "✅ External HTTPS connectivity test passed (port 5000)!"
+              
+              # Get health response
+              HEALTH_RESPONSE=$(curl -s -k -m 10 https://${{ env.INSTANCE_IP }}:5000/health)
+              echo "📋 Health Response:"
+              echo "$HEALTH_RESPONSE" | jq '.' 2>/dev/null || echo "$HEALTH_RESPONSE"
+              
+              echo "🎉 Deployment successful!"
+              echo "🌐 Application URL: https://${{ env.INSTANCE_IP }}:5000"
+              echo "🔗 Health check: https://${{ env.INSTANCE_IP }}:5000/health"
+              echo "📊 API endpoints: https://${{ env.INSTANCE_IP }}:5000/api/v1/"
+              echo ""
+              echo "⚠️  Note: Self-signed certificate requires browser acceptance:"
+              echo "   1. Visit https://${{ env.INSTANCE_IP }}:5000 in browser"
+              echo "   2. Click 'Advanced' → 'Proceed to ${{ env.INSTANCE_IP }} (unsafe)'"
+              echo "   3. Then use the application normally"
+              exit 0
+            fi
+            
+            sleep 10
+          done
+          
+          echo "❌ External HTTPS connectivity test failed"
+          echo "Application may be running but not accessible externally"
+          echo "Please check:"
+          echo "1. Security group allows inbound traffic on port 5000"
+          echo "2. Application is binding to 0.0.0.0 (all interfaces)"
+          echo "3. SSL certificate is properly configured"
+          echo "4. No firewall blocking the connection"
+          
+          # Also test if HTTP is working (fallback)
+          echo ""
+          echo "🔄 Testing HTTP as fallback..."
+          if curl -s -f -m 10 http://${{ env.INSTANCE_IP }}:5000/health > /dev/null; then
+            echo "⚠️  HTTP works but HTTPS doesn't - SSL configuration issue"
+            echo "🌐 Temporary HTTP URL: http://${{ env.INSTANCE_IP }}:5000"
+          else
+            echo "❌ Both HTTP and HTTPS failed - network/binding issue"
+          fi
+          
+          exit 1
+
+      - name: 🧹 Cleanup on Failure
+        if: failure()
+        run: |
+          echo "🧹 Cleaning up after failure..."
+          echo "Check the application logs on the server:"
+          echo "ssh ec2-user@${{ env.INSTANCE_IP }} 'sudo tail -50 /var/log/book-review-api.log'"

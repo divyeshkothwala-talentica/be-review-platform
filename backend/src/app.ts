@@ -95,9 +95,11 @@ class App {
   }
 
   public listen(): void {
-    this.app.listen(config.port, () => {
+    // Bind to all interfaces (0.0.0.0) to allow external connections
+    this.app.listen(config.port, '0.0.0.0', () => {
       logger.info(`🚀 Server running on port ${config.port}`, {
         port: config.port,
+        host: '0.0.0.0',
         environment: config.nodeEnv,
         apiVersion: config.apiVersion,
       });
