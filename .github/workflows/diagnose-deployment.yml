@@ -1,0 +1,236 @@
+name: Diagnose Deployment Issues
+
+on:
+  workflow_dispatch:
+    inputs:
+      diagnostic_type:
+        description: 'Type of diagnostic to run'
+        required: true
+        default: 'full'
+        type: choice
+        options:
+          - full
+          - pm2-only
+          - logs-only
+          - process-check
+
+env:
+  AWS_REGION: 'us-east-1'
+  INSTANCE_IP: '44.194.207.22'
+
+jobs:
+  diagnose:
+    name: Diagnose Server Issues
+    runs-on: ubuntu-latest
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Get EC2 Instance ID
+        id: get-instance
+        run: |
+          echo "🔍 Finding EC2 instance ID for IP ${{ env.INSTANCE_IP }}..."
+          
+          INSTANCE_ID=$(aws ec2 describe-instances \
+            --filters "Name=instance-state-name,Values=running" \
+                      "Name=ip-address,Values=${{ env.INSTANCE_IP }}" \
+            --query 'Reservations[0].Instances[0].InstanceId' \
+            --output text 2>/dev/null || echo "None")
+          
+          if [ "$INSTANCE_ID" = "None" ] || [ "$INSTANCE_ID" = "null" ] || [ -z "$INSTANCE_ID" ]; then
+            INSTANCE_ID=$(aws ec2 describe-instances \
+              --filters "Name=instance-state-name,Values=running" \
+                        "Name=network-interface.association.public-ip,Values=${{ env.INSTANCE_IP }}" \
+              --query 'Reservations[0].Instances[0].InstanceId' \
+              --output text 2>/dev/null || echo "None")
+          fi
+          
+          if [ "$INSTANCE_ID" = "None" ] || [ "$INSTANCE_ID" = "null" ] || [ -z "$INSTANCE_ID" ]; then
+            INSTANCE_ID=$(aws ec2 describe-instances \
+              --filters "Name=instance-state-name,Values=running" \
+              --query "Reservations[].Instances[?PublicIpAddress=='${{ env.INSTANCE_IP }}'].InstanceId" \
+              --output text 2>/dev/null || echo "None")
+          fi
+          
+          echo "✅ Found instance ID: $INSTANCE_ID"
+          echo "instance_id=$INSTANCE_ID" >> $GITHUB_OUTPUT
+
+      - name: 🔍 Comprehensive Server Diagnostic
+        if: github.event.inputs.diagnostic_type == 'full' || github.event.inputs.diagnostic_type == ''
+        run: |
+          echo "🔍 Running comprehensive server diagnostic..."
+          
+          INSTANCE_ID="${{ steps.get-instance.outputs.instance_id }}"
+          
+          COMMAND_ID=$(aws ssm send-command \
+            --instance-ids "$INSTANCE_ID" \
+            --document-name "AWS-RunShellScript" \
+            --parameters 'commands=[
+              "echo \"🔍 COMPREHENSIVE SERVER DIAGNOSTIC\"",
+              "echo \"==============================\"",
+              "echo \"\"",
+              "echo \"1️⃣ CHECKING NODE.JS PROCESSES\"",
+              "ps aux | grep node | grep -v grep || echo \"No Node.js processes found\"",
+              "echo \"\"",
+              "echo \"2️⃣ CHECKING PM2 STATUS\"",
+              "pm2 status || echo \"PM2 not available or no processes\"",
+              "echo \"\"",
+              "echo \"3️⃣ CHECKING PM2 LOGS (Last 20 lines)\"",
+              "pm2 logs --lines 20 || echo \"No PM2 logs available\"",
+              "echo \"\"",
+              "echo \"4️⃣ CHECKING APPLICATION DIRECTORY\"",
+              "ls -la /opt/book-review-api/current/backend/ 2>/dev/null || echo \"Application directory not found\"",
+              "echo \"\"",
+              "echo \"5️⃣ CHECKING DIST DIRECTORY\"",
+              "ls -la /opt/book-review-api/current/backend/dist/ 2>/dev/null || echo \"Dist directory not found\"",
+              "echo \"\"",
+              "echo \"6️⃣ CHECKING APPLICATION LOGS\"",
+              "tail -20 /var/log/book-review-api.log 2>/dev/null || echo \"Application log not found\"",
+              "echo \"\"",
+              "echo \"7️⃣ CHECKING PORTS IN USE\"",
+              "netstat -tlnp | grep -E \":80|:443|:3000|:5000\" || echo \"No processes on common ports\"",
+              "echo \"\"",
+              "echo \"8️⃣ CHECKING SYSTEM RESOURCES\"",
+              "echo \"Memory:\"",
+              "free -h",
+              "echo \"Disk:\"",
+              "df -h /",
+              "echo \"\"",
+              "echo \"9️⃣ CHECKING RECENT SYSTEM LOGS\"",
+              "journalctl --since \"5 minutes ago\" --no-pager | tail -10 || echo \"No recent system logs\"",
+              "echo \"\"",
+              "echo \"🔟 CHECKING ENVIRONMENT VARIABLES\"",
+              "echo \"NODE_ENV: $NODE_ENV\"",
+              "echo \"PORT: $PORT\"",
+              "echo \"\"",
+              "echo \"✅ DIAGNOSTIC COMPLETE\""
+            ]' \
+            --query 'Command.CommandId' \
+            --output text)
+          
+          echo "Command ID: $COMMAND_ID"
+          
+          # Wait for command completion
+          echo "⏳ Waiting for diagnostic to complete..."
+          for i in {1..30}; do
+            STATUS=$(aws ssm get-command-invocation \
+              --command-id "$COMMAND_ID" \
+              --instance-id "$INSTANCE_ID" \
+              --query 'Status' \
+              --output text 2>/dev/null || echo "InProgress")
+            
+            echo "Status: $STATUS (attempt $i/30)"
+            
+            if [ "$STATUS" = "Success" ]; then
+              echo "✅ Diagnostic completed successfully!"
+              break
+            elif [ "$STATUS" = "Failed" ] || [ "$STATUS" = "Cancelled" ] || [ "$STATUS" = "TimedOut" ]; then
+              echo "❌ Diagnostic failed with status: $STATUS"
+              aws ssm get-command-invocation \
+                --command-id "$COMMAND_ID" \
+                --instance-id "$INSTANCE_ID" \
+                --query 'StandardErrorContent' \
+                --output text
+              exit 1
+            fi
+            
+            sleep 10
+          done
+          
+          # Get diagnostic output
+          echo "📋 DIAGNOSTIC RESULTS:"
+          echo "===================="
+          aws ssm get-command-invocation \
+            --command-id "$COMMAND_ID" \
+            --instance-id "$INSTANCE_ID" \
+            --query 'StandardOutputContent' \
+            --output text
+
+      - name: 🔄 Attempt Application Restart
+        if: github.event.inputs.diagnostic_type == 'full' || github.event.inputs.diagnostic_type == ''
+        run: |
+          echo "🔄 Attempting to restart the application..."
+          
+          INSTANCE_ID="${{ steps.get-instance.outputs.instance_id }}"
+          
+          COMMAND_ID=$(aws ssm send-command \
+            --instance-ids "$INSTANCE_ID" \
+            --document-name "AWS-RunShellScript" \
+            --parameters 'commands=[
+              "echo \"🔄 ATTEMPTING APPLICATION RESTART\"",
+              "echo \"===============================\"",
+              "echo \"\"",
+              "echo \"1️⃣ Stopping existing processes\"",
+              "sudo pkill -f \"node.*app.js\" 2>/dev/null || echo \"No existing processes to kill\"",
+              "pm2 stop all 2>/dev/null || echo \"No PM2 processes to stop\"",
+              "sleep 3",
+              "echo \"\"",
+              "echo \"2️⃣ Checking application directory\"",
+              "cd /opt/book-review-api/current/backend || { echo \"❌ Cannot access application directory\"; exit 1; }",
+              "pwd",
+              "echo \"\"",
+              "echo \"3️⃣ Checking if dist/app.js exists\"",
+              "if [ -f dist/app.js ]; then",
+              "  echo \"✅ Found dist/app.js\"",
+              "else",
+              "  echo \"❌ dist/app.js not found, attempting rebuild...\"",
+              "  npm run build",
+              "  if [ -f dist/app.js ]; then",
+              "    echo \"✅ Build successful, app.js created\"",
+              "  else",
+              "    echo \"❌ Build failed or app.js still missing\"",
+              "    exit 1",
+              "  fi",
+              "fi",
+              "echo \"\"",
+              "echo \"4️⃣ Starting application\"",
+              "cd dist",
+              "sudo nohup node app.js > /var/log/book-review-api.log 2>&1 &",
+              "sleep 5",
+              "echo \"\"",
+              "echo \"5️⃣ Checking if application started\"",
+              "ps aux | grep \"node.*app.js\" | grep -v grep || echo \"❌ Application not running\"",
+              "echo \"\"",
+              "echo \"6️⃣ Testing local connection\"",
+              "curl -s http://localhost:3000/health || curl -s http://localhost:5000/health || echo \"❌ Local health check failed\"",
+              "echo \"\"",
+              "echo \"✅ RESTART ATTEMPT COMPLETE\""
+            ]' \
+            --query 'Command.CommandId' \
+            --output text)
+          
+          # Wait and get results
+          sleep 30
+          
+          echo "📋 RESTART RESULTS:"
+          echo "=================="
+          aws ssm get-command-invocation \
+            --command-id "$COMMAND_ID" \
+            --instance-id "$INSTANCE_ID" \
+            --query 'StandardOutputContent' \
+            --output text
+
+      - name: 🔍 Final Health Check
+        run: |
+          echo "🔍 Final health check..."
+          sleep 10
+          
+          # Test external connectivity
+          HEALTH_RESPONSE=$(curl -s -k -m 10 https://${{ env.INSTANCE_IP }}/health 2>/dev/null || curl -s -m 10 http://${{ env.INSTANCE_IP }}/health 2>/dev/null || echo "")
+          
+          if [ -n "$HEALTH_RESPONSE" ]; then
+            echo "✅ Application is responding!"
+            echo "📋 Health Response:"
+            echo "$HEALTH_RESPONSE" | jq '.' 2>/dev/null || echo "$HEALTH_RESPONSE"
+          else
+            echo "❌ Application still not responding externally"
+            echo "🔍 This could be due to:"
+            echo "1. Application not binding to correct port/interface"
+            echo "2. Security group not allowing external access"
+            echo "3. Load balancer or reverse proxy issues"
+            echo "4. Application crashed after startup"
+          fi
