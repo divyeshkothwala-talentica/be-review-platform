@@ -48,9 +48,9 @@ class App {
       crossOriginEmbedderPolicy: false,
     }));
 
-    // CORS configuration
+    // CORS configuration - Allow all origins for development
     this.app.use(cors({
-      origin: config.corsOrigin,
+      origin: true, // Allow all origins
       credentials: true,
       methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
       allowedHeaders: [
