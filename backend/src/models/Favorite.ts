@@ -13,13 +13,13 @@ export interface IFavorite extends Document {
 
 // Interface for Favorite static methods
 export interface IFavoriteModel extends mongoose.Model<IFavorite> {
-  isBookFavoritedByUser(userId: string, bookId: string): Promise<boolean>;
-  getUserFavoriteCount(userId: string): Promise<number>;
-  getFavoriteCountForBook(bookId: string): Promise<number>;
-  toggleFavorite(userId: string, bookId: string): Promise<{ action: 'added' | 'removed'; favorite?: IFavorite }>;
-  getPopularBooks(limit?: number): Promise<any[]>;
-  findUserFavoritesWithBooks(userId: string): Promise<any[]>;
-  findBookFavorites(bookId: string): Promise<any[]>;
+  isBookFavoritedByUser(_userId: string, _bookId: string): Promise<boolean>;
+  getUserFavoriteCount(_userId: string): Promise<number>;
+  getFavoriteCountForBook(_bookId: string): Promise<number>;
+  toggleFavorite(_userId: string, _bookId: string): Promise<{ action: 'added' | 'removed'; favorite?: IFavorite }>;
+  getPopularBooks(_limit?: number): Promise<any[]>;
+  findUserFavoritesWithBooks(_userId: string): Promise<any[]>;
+  findBookFavorites(_bookId: string): Promise<any[]>;
 }
 
 // Favorite schema definition

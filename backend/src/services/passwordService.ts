@@ -32,7 +32,7 @@ export class PasswordService {
   static async hashPassword(password: string): Promise<string> {
     try {
       return await bcrypt.hash(password, PASSWORD_CONFIG.saltRounds);
-    } catch (error) {
+    } catch {
       throw new Error('Password hashing failed');
     }
   }
@@ -46,7 +46,7 @@ export class PasswordService {
   ): Promise<boolean> {
     try {
       return await bcrypt.compare(password, hashedPassword);
-    } catch (error) {
+    } catch {
       throw new Error('Password comparison failed');
     }
   }

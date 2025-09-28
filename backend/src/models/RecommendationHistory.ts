@@ -46,9 +46,9 @@ export interface IRecommendationHistory extends Document {
 
 // Interface for static methods
 interface IRecommendationHistoryModel extends mongoose.Model<IRecommendationHistory> {
-  findActiveForUser(userId: string): Promise<IRecommendationHistory | null>;
-  getUserHistory(userId: string, limit?: number, skip?: number): Promise<IRecommendationHistory[]>;
-  getAnalytics(startDate?: Date, endDate?: Date): Promise<any>;
+  findActiveForUser(_userId: string): Promise<IRecommendationHistory | null>;
+  getUserHistory(_userId: string, _limit?: number, _skip?: number): Promise<IRecommendationHistory[]>;
+  getAnalytics(_startDate?: Date, _endDate?: Date): Promise<any>;
 }
 
 // Schema for individual recommendation item

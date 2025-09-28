@@ -43,7 +43,7 @@ class FallbackRecommendationService {
       let userObjectId: Types.ObjectId;
       try {
         userObjectId = new Types.ObjectId(userId);
-      } catch (error) {
+      } catch {
         // If userId is not a valid ObjectId (e.g., UUID), we'll use it as string
         // This is a fallback for when User model uses UUID instead of ObjectId
         logger.warn('UserId is not a valid ObjectId, using string format:', { userId });
@@ -144,7 +144,7 @@ class FallbackRecommendationService {
     return Array.from(bookIds).map(id => {
       try {
         return new Types.ObjectId(id);
-      } catch (error) {
+      } catch {
         // If bookId is not a valid ObjectId, return it as string
         return id as any;
       }

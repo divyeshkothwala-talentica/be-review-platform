@@ -18,7 +18,7 @@ interface ValidationRule {
   minLength?: number;
   maxLength?: number;
   pattern?: RegExp;
-  custom?: (value: any) => string | null;
+  custom?: (_value: any) => string | null;
 }
 
 /**
@@ -139,7 +139,7 @@ const validateType = (fieldName: string, value: any, expectedType: string): stri
       }
       break;
 
-    case 'email':
+    case 'email': {
       if (typeof value !== 'string') {
         return `${fieldName} must be a string`;
       }
@@ -148,6 +148,7 @@ const validateType = (fieldName: string, value: any, expectedType: string): stri
         return `${fieldName} must be a valid email address`;
       }
       break;
+    }
 
     case 'boolean':
       if (typeof value !== 'boolean') {
