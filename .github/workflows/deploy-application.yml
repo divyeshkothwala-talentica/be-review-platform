@@ -90,137 +90,7 @@ jobs:
             backend/package-lock.json
           retention-days: 7
 
-  deploy-dev:
-    name: Deploy to Development
-    runs-on: ubuntu-latest
-    needs: [test, build]
-    if: github.ref == 'refs/heads/develop' || (github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'dev')
-    environment: development
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ env.AWS_REGION }}
-
-      - name: Download Terraform outputs
-        uses: actions/download-artifact@v4
-        with:
-          name: terraform-outputs-dev
-          path: terraform/environments/dev/
-        continue-on-error: true
-
-      - name: Get instance information
-        id: instance
-        run: |
-          if [ -f terraform/environments/dev/terraform-outputs.json ]; then
-            INSTANCE_IP=$(jq -r '.instance_public_ip.value' terraform/environments/dev/terraform-outputs.json)
-            echo "instance_ip=$INSTANCE_IP" >> $GITHUB_OUTPUT
-          else
-            echo "Terraform outputs not found. Please run infrastructure deployment first."
-            exit 1
-          fi
-
-      - name: Setup SSH key
-        run: |
-          mkdir -p ~/.ssh
-          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/deploy_key
-          chmod 600 ~/.ssh/deploy_key
-          ssh-keyscan -H ${{ steps.instance.outputs.instance_ip }} >> ~/.ssh/known_hosts
-
-      - name: Deploy application
-        run: |
-          chmod +x terraform/scripts/deploy-application.sh
-          ./terraform/scripts/deploy-application.sh \
-            -e dev \
-            -r ${{ github.repository }} \
-            -b ${{ github.ref_name }} \
-            -k ~/.ssh/deploy_key
-
-      - name: Run health check
-        run: |
-          sleep 30
-          curl -f http://${{ steps.instance.outputs.instance_ip }}:5000/health || exit 1
-
-      - name: Notify deployment success
-        if: success()
-        run: |
-          echo "✅ Development deployment successful!"
-          echo "Application URL: http://${{ steps.instance.outputs.instance_ip }}:5000"
-
-  deploy-staging:
-    name: Deploy to Staging
-    runs-on: ubuntu-latest
-    needs: [test, build]
-    if: (github.ref == 'refs/heads/main' && github.event_name == 'push') || (github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'staging')
-    environment: staging
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ env.AWS_REGION }}
-
-      - name: Download Terraform outputs
-        uses: actions/download-artifact@v4
-        with:
-          name: terraform-outputs-staging
-          path: terraform/environments/staging/
-        continue-on-error: true
-
-      - name: Get instance information
-        id: instance
-        run: |
-          if [ -f terraform/environments/staging/terraform-outputs.json ]; then
-            INSTANCE_IP=$(jq -r '.instance_public_ip.value' terraform/environments/staging/terraform-outputs.json)
-            echo "instance_ip=$INSTANCE_IP" >> $GITHUB_OUTPUT
-          else
-            echo "Terraform outputs not found. Please run infrastructure deployment first."
-            exit 1
-          fi
-
-      - name: Setup SSH key
-        run: |
-          mkdir -p ~/.ssh
-          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/deploy_key
-          chmod 600 ~/.ssh/deploy_key
-          ssh-keyscan -H ${{ steps.instance.outputs.instance_ip }} >> ~/.ssh/known_hosts
-
-      - name: Deploy application
-        run: |
-          chmod +x terraform/scripts/deploy-application.sh
-          ./terraform/scripts/deploy-application.sh \
-            -e staging \
-            -r ${{ github.repository }} \
-            -b ${{ github.ref_name }} \
-            -k ~/.ssh/deploy_key
-
-      - name: Run health check
-        run: |
-          sleep 30
-          curl -f http://${{ steps.instance.outputs.instance_ip }}:5000/health || exit 1
-
-      - name: Run smoke tests
-        run: |
-          # Basic API endpoint tests
-          curl -f http://${{ steps.instance.outputs.instance_ip }}:5000/api/v1/books || exit 1
-          echo "✅ Smoke tests passed"
-
-      - name: Notify deployment success
-        if: success()
-        run: |
-          echo "✅ Staging deployment successful!"
-          echo "Application URL: http://${{ steps.instance.outputs.instance_ip }}:5000"
-
-  deploy-prod:
+deploy-prod:
     name: Deploy to Production
     runs-on: ubuntu-latest
     needs: [test, build]
@@ -284,18 +154,18 @@ jobs:
       - name: Run health check
         run: |
           sleep 30
-          curl -f http://${{ steps.instance.outputs.instance_ip }}:5000/health || exit 1
+          curl -f https://${{ steps.instance.outputs.instance_ip }}/health || exit 1
 
       - name: Run comprehensive tests
         run: |
           # Health check
-          curl -f http://${{ steps.instance.outputs.instance_ip }}:5000/health || exit 1
+          curl -f https://${{ steps.instance.outputs.instance_ip }}/health || exit 1
           
           # API endpoints
-          curl -f http://${{ steps.instance.outputs.instance_ip }}:5000/api/v1/books || exit 1
+          curl -f https://${{ steps.instance.outputs.instance_ip }}/api/v1/books || exit 1
           
           # Database connectivity (through API)
-          response=$(curl -s http://${{ steps.instance.outputs.instance_ip }}:5000/api/v1/books)
+          response=$(curl -s https://${{ steps.instance.outputs.instance_ip }}/api/v1/books)
           if [[ $response == *"error"* ]]; then
             echo "❌ Database connectivity test failed"
             exit 1
@@ -307,7 +177,7 @@ jobs:
         if: success() && !github.event.inputs.rollback
         run: |
           echo "🚀 Production deployment successful!"
-          echo "Application URL: http://${{ steps.instance.outputs.instance_ip }}:5000"
+          echo "Application URL: https://${{ steps.instance.outputs.instance_ip }}"
           echo "Please monitor the application closely for the next few hours."
 
       - name: Notify rollback success
@@ -368,11 +238,11 @@ jobs:
       - name: Verify rollback
         run: |
           sleep 30
-          curl -f http://${{ steps.instance.outputs.instance_ip }}:5000/health || exit 1
+          curl -f https://${{ steps.instance.outputs.instance_ip }}/health || exit 1
           echo "✅ Rollback verification successful"
 
       - name: Notify rollback completion
         if: success()
         run: |
           echo "🔄 Rollback completed for ${{ github.event.inputs.environment }} environment"
-          echo "Application URL: http://${{ steps.instance.outputs.instance_ip }}:5000"
+          echo "Application URL: https://${{ steps.instance.outputs.instance_ip }}"
