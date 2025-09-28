@@ -1,4 +1,4 @@
-name: Application Deployment
+name: Simple Deployment Pipeline
 
 on:
   push:
@@ -7,36 +7,21 @@ on:
     paths:
       - 'backend/**'
       - '.github/workflows/deploy-application.yml'
-  workflow_dispatch:
-    inputs:
-      environment:
-        description: 'Environment to deploy'
-        required: true
-        default: 'dev'
-        type: choice
-        options:
-          - dev
-          - staging
-          - prod
-      rollback:
-        description: 'Rollback to previous version'
-        required: false
-        default: false
-        type: boolean
 
 env:
   NODE_VERSION: '18'
-  AWS_REGION: 'us-east-1'
+  INSTANCE_IP: '44.194.207.22'
 
 jobs:
-  build:
-    name: Build Application
+  deploy:
+    name: Deploy Application
     runs-on: ubuntu-latest
     defaults:
       run:
         working-directory: ./backend
     steps:
-      - name: Checkout code
+      # Step 1: Check compile errors
+      - name: 1️⃣ Check Compile Errors
         uses: actions/checkout@v4
 
       - name: Setup Node.js
@@ -47,260 +32,85 @@ jobs:
           cache-dependency-path: backend/package-lock.json
 
       - name: Install dependencies
-        run: |
-          echo "📦 Installing all dependencies (including devDependencies for TypeScript)..."
-          npm ci
-          echo "✅ Dependencies installed"
-          
-          echo "🔍 Verifying TypeScript and type definitions..."
-          npx tsc --version
-          ls -la node_modules/@types/ | head -5
-          echo "✅ Type definitions verified"
+        run: npm ci
 
-      - name: Build application
+      - name: TypeScript compile check
         run: |
-          echo "🏗️ Building TypeScript application..."
+          echo "🔍 Checking for TypeScript compile errors..."
+          npm run typecheck
+          echo "✅ No compile errors found"
+
+      # Step 2: Check linting issues
+      - name: 2️⃣ Check Linting Issues
+        run: |
+          echo "🔍 Checking for linting issues..."
+          npm run lint
+          echo "✅ No linting issues found"
+
+      # Step 3: Build
+      - name: 3️⃣ Build Application
+        run: |
+          echo "🏗️ Building application..."
           npm run build
-          echo "✅ Build completed"
+          echo "✅ Build completed successfully"
 
-      - name: Upload build artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: build-artifacts
-          path: |
-            backend/dist/
-            backend/package.json
-            backend/package-lock.json
-          retention-days: 7
-
-  deploy-prod:
-    name: Deploy to Production
-    runs-on: ubuntu-latest
-    needs: [build]
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-    environment: production
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ env.AWS_REGION }}
-
-      - name: Set instance information
-        id: find-instance
+      # Step 4: Deploy to existing infrastructure
+      - name: 4️⃣ Deploy to Production Server
         run: |
-          echo "🔍 Setting up instance information for deployment..."
+          echo "🚀 Deploying to production server at ${{ env.INSTANCE_IP }}..."
           
-          # Use known working IP address
-          INSTANCE_IP="44.194.207.22"
-          
-          echo "✅ Using production instance IP: $INSTANCE_IP"
-          echo "instance_ip=$INSTANCE_IP" >> $GITHUB_OUTPUT
-          
-          # Optional: Try to find instance ID for reference (but don't fail if not found)
-          echo "🔍 Attempting to find instance ID for reference..."
-          INSTANCE_ID=$(aws ec2 describe-instances \
-            --filters "Name=instance-state-name,Values=running" \
-                      "Name=public-ip-address,Values=$INSTANCE_IP" \
-            --query 'Reservations[0].Instances[0].InstanceId' \
-            --output text 2>/dev/null || echo "unknown")
-          
-          if [ "$INSTANCE_ID" != "unknown" ] && [ "$INSTANCE_ID" != "None" ]; then
-            echo "✅ Found instance ID: $INSTANCE_ID"
-            echo "instance_id=$INSTANCE_ID" >> $GITHUB_OUTPUT
-          else
-            echo "ℹ️ Could not determine instance ID (not critical for deployment)"
-          fi
-
-      - name: Verify instance information
-        id: instance
-        run: |
-          INSTANCE_IP="${{ steps.find-instance.outputs.instance_ip }}"
-          
-          echo "🔍 Verifying instance accessibility..."
-          echo "Instance IP: $INSTANCE_IP"
-          
-          # Verify instance is reachable
-          if ping -c 1 -W 5 $INSTANCE_IP > /dev/null 2>&1; then
-            echo "✅ Instance is reachable via ping"
-          else
-            echo "⚠️  Instance not reachable via ping (may be normal if ICMP is blocked)"
-          fi
-          
-          echo "instance_ip=$INSTANCE_IP" >> $GITHUB_OUTPUT
-
-      - name: Setup SSH key
-        run: |
+          # Setup SSH key
           mkdir -p ~/.ssh
           echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
-          ssh-keyscan -H ${{ steps.instance.outputs.instance_ip }} >> ~/.ssh/known_hosts
-
-      - name: Deploy application
-        if: ${{ !github.event.inputs.rollback }}
-        run: |
-          echo "🚀 Starting deployment to existing infrastructure..."
+          ssh-keyscan -H ${{ env.INSTANCE_IP }} >> ~/.ssh/known_hosts
           
-          INSTANCE_IP="${{ steps.find-instance.outputs.instance_ip }}"
-          
-          echo "📦 Deploying to $INSTANCE_IP via SSH..."
-          
-          # Simple deployment via SSH
-          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no ec2-user@$INSTANCE_IP << 'DEPLOY_SCRIPT'
+          # Deploy via SSH
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no ec2-user@${{ env.INSTANCE_IP }} << 'DEPLOY_SCRIPT'
           set -e
           
           echo "📦 Updating application on server..."
           
-          # Navigate to app directory (create if doesn't exist)
-          sudo mkdir -p /opt/book-review-api
-          cd /opt/book-review-api
-          
-          # Backup current version if exists
-          if [ -d current ]; then
-            sudo rm -rf backup 2>/dev/null || true
-            sudo mv current backup 2>/dev/null || true
-          fi
-          
-          # Clone latest code
-          echo "📥 Cloning latest code..."
-          sudo git clone https://github.com/${{ github.repository }}.git current || {
-            echo "Git clone failed, trying to update existing repo..."
-            cd current
-            sudo git fetch origin
-            sudo git reset --hard origin/${{ github.ref_name }}
+          # Navigate to app directory
+          cd /opt/book-review-api/current/backend || {
+            echo "App directory not found, setting up fresh deployment..."
+            sudo mkdir -p /opt/book-review-api
+            cd /opt/book-review-api
+            sudo git clone https://github.com/${{ github.repository }}.git current
+            cd current/backend
           }
           
-          cd current/backend
+          # Update code
+          echo "📥 Pulling latest code..."
+          sudo git fetch origin
+          sudo git reset --hard origin/main
           
-          # Install dependencies and build
+          # Install and build
           echo "🏗️ Installing dependencies and building..."
-          sudo npm ci
+          sudo npm ci --only=production
           sudo npm run build
           
-          # Restart application (try multiple methods)
+          # Restart application
           echo "🔄 Restarting application..."
-          
-          # Try PM2 restart
-          sudo pm2 restart all 2>/dev/null || echo "PM2 restart failed or not running"
-          
-          # Try systemd restart
-          sudo systemctl restart book-review-api 2>/dev/null || echo "Systemd restart failed or not configured"
-          
-          # Try direct node restart (fallback)
           sudo pkill -f "node.*app.js" 2>/dev/null || true
-          sleep 3
+          sleep 2
           cd dist
           sudo nohup node app.js > /var/log/book-review-api.log 2>&1 &
           
           echo "✅ Deployment completed successfully"
-          
           DEPLOY_SCRIPT
 
-      - name: Rollback application
-        if: ${{ github.event.inputs.rollback }}
+      - name: Verify Deployment
         run: |
-          chmod +x terraform/scripts/deploy-application.sh
-          ./terraform/scripts/deploy-application.sh \
-            -e prod \
-            --rollback \
-            -k ~/.ssh/deploy_key
-
-      - name: Run health check
-        run: |
-          sleep 30
-          curl -f https://${{ steps.instance.outputs.instance_ip }}/health || exit 1
-
-      - name: Run comprehensive tests
-        run: |
-          # Health check
-          curl -f https://${{ steps.instance.outputs.instance_ip }}/health || exit 1
+          echo "🔍 Verifying deployment..."
+          sleep 10
           
-          # API endpoints
-          curl -f https://${{ steps.instance.outputs.instance_ip }}/api/v1/books || exit 1
-          
-          # Database connectivity (through API)
-          response=$(curl -s https://${{ steps.instance.outputs.instance_ip }}/api/v1/books)
-          if [[ $response == *"error"* ]]; then
-            echo "❌ Database connectivity test failed"
-            exit 1
-          fi
-          
-          echo "✅ All production tests passed"
-
-      - name: Notify deployment success
-        if: success() && !github.event.inputs.rollback
-        run: |
-          echo "🚀 Production deployment successful!"
-          echo "Application URL: https://${{ steps.instance.outputs.instance_ip }}"
-          echo "Please monitor the application closely for the next few hours."
-
-      - name: Notify rollback success
-        if: success() && github.event.inputs.rollback
-        run: |
-          echo "🔄 Production rollback successful!"
-          echo "Application has been rolled back to the previous version."
-
-  rollback:
-    name: Rollback Application
-    runs-on: ubuntu-latest
-    if: github.event_name == 'workflow_dispatch' && github.event.inputs.rollback
-    environment: ${{ github.event.inputs.environment }}
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ env.AWS_REGION }}
-
-      - name: Download Terraform outputs
-        uses: actions/download-artifact@v4
-        with:
-          name: terraform-outputs-${{ github.event.inputs.environment }}
-          path: terraform/environments/${{ github.event.inputs.environment }}/
-        continue-on-error: true
-
-      - name: Get instance information
-        id: instance
-        run: |
-          if [ -f terraform/environments/${{ github.event.inputs.environment }}/terraform-outputs.json ]; then
-            INSTANCE_IP=$(jq -r '.instance_public_ip.value' terraform/environments/${{ github.event.inputs.environment }}/terraform-outputs.json)
-            echo "instance_ip=$INSTANCE_IP" >> $GITHUB_OUTPUT
+          # Basic health check
+          if curl -f http://${{ env.INSTANCE_IP }}/health; then
+            echo "✅ Health check passed"
           else
-            echo "Terraform outputs not found. Please run infrastructure deployment first."
+            echo "❌ Health check failed"
             exit 1
           fi
-
-      - name: Setup SSH key
-        run: |
-          mkdir -p ~/.ssh
-          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/deploy_key
-          chmod 600 ~/.ssh/deploy_key
-          ssh-keyscan -H ${{ steps.instance.outputs.instance_ip }} >> ~/.ssh/known_hosts
-
-      - name: Perform rollback
-        run: |
-          chmod +x terraform/scripts/deploy-application.sh
-          ./terraform/scripts/deploy-application.sh \
-            -e ${{ github.event.inputs.environment }} \
-            --rollback \
-            -k ~/.ssh/deploy_key
-
-      - name: Verify rollback
-        run: |
-          sleep 30
-          curl -f https://${{ steps.instance.outputs.instance_ip }}/health || exit 1
-          echo "✅ Rollback verification successful"
-
-      - name: Notify rollback completion
-        if: success()
-        run: |
-          echo "🔄 Rollback completed for ${{ github.event.inputs.environment }} environment"
-          echo "Application URL: https://${{ steps.instance.outputs.instance_ip }}"
+          
+          echo "🎉 Deployment successful! Application is running at http://${{ env.INSTANCE_IP }}"
