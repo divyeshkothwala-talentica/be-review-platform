@@ -159,7 +159,7 @@ jobs:
               "sudo git fetch origin",
               "sudo git reset --hard origin/main",
               "echo \"🏗️ Installing dependencies and building...\"",
-              "sudo npm ci --only=production",
+              "sudo npm ci",
               "sudo npm run build",
               "echo \"🔄 Restarting application...\"",
               "sudo pkill -f \"node.*app.js\" 2>/dev/null || true",
@@ -237,7 +237,7 @@ jobs:
           sudo git reset --hard origin/main
           
           echo "🏗️ Installing dependencies and building..."
-          sudo npm ci --only=production
+          sudo npm ci
           sudo npm run build
           
           echo "🔄 Restarting application..."
@@ -275,7 +275,7 @@ jobs:
           echo "sudo /tmp/webhook-deploy.sh"
           echo ""
           echo "🔗 Or run these commands directly on your server:"
-          echo "cd /opt/book-review-api/current/backend && sudo git pull origin main && sudo npm run build && sudo pkill -f 'node.*app.js' && cd dist && sudo nohup node app.js > /var/log/book-review-api.log 2>&1 &"
+          echo "cd /opt/book-review-api/current/backend && sudo git pull origin main && sudo npm ci && sudo npm run build && sudo pkill -f 'node.*app.js' && cd dist && sudo nohup node app.js > /var/log/book-review-api.log 2>&1 &"
 
       - name: Verify Deployment
         run: |
