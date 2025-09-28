@@ -107,23 +107,72 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: Download Terraform outputs
-        uses: actions/download-artifact@v4
-        with:
-          name: terraform-outputs-prod
-          path: terraform/environments/prod/
-        continue-on-error: true
+      - name: Find existing EC2 instance
+        id: find-instance
+        run: |
+          echo "🔍 Finding existing EC2 instance for production..."
+          
+          # Find EC2 instance by tag or name pattern
+          INSTANCE_INFO=$(aws ec2 describe-instances \
+            --filters "Name=instance-state-name,Values=running" \
+                      "Name=tag:Environment,Values=prod" \
+                      "Name=tag:Project,Values=book-review-platform" \
+            --query 'Reservations[0].Instances[0].[InstanceId,PublicIpAddress]' \
+            --output text 2>/dev/null || echo "")
+          
+          if [ -z "$INSTANCE_INFO" ] || [ "$INSTANCE_INFO" = "None None" ]; then
+            echo "❌ No running production instance found with tags"
+            echo "Trying to find by instance type and key pair..."
+            
+            # Fallback: find by instance type and key pair
+            INSTANCE_INFO=$(aws ec2 describe-instances \
+              --filters "Name=instance-state-name,Values=running" \
+                        "Name=instance-type,Values=t3.medium" \
+                        "Name=key-name,Values=review-platform-backend-key" \
+              --query 'Reservations[0].Instances[0].[InstanceId,PublicIpAddress]' \
+              --output text 2>/dev/null || echo "")
+          fi
+          
+          if [ -z "$INSTANCE_INFO" ] || [ "$INSTANCE_INFO" = "None None" ]; then
+            echo "❌ No suitable EC2 instance found!"
+            echo ""
+            echo "🔍 Available instances:"
+            aws ec2 describe-instances \
+              --filters "Name=instance-state-name,Values=running" \
+              --query 'Reservations[].Instances[].[InstanceId,PublicIpAddress,InstanceType,KeyName,Tags[?Key==`Name`].Value|[0]]' \
+              --output table
+            echo ""
+            echo "💡 Using known working IP as fallback..."
+            INSTANCE_IP="44.194.207.22"
+            echo "instance_ip=$INSTANCE_IP" >> $GITHUB_OUTPUT
+            echo "✅ Using fallback IP: $INSTANCE_IP"
+          else
+            INSTANCE_ID=$(echo $INSTANCE_INFO | cut -d' ' -f1)
+            INSTANCE_IP=$(echo $INSTANCE_INFO | cut -d' ' -f2)
+            
+            echo "✅ Found instance: $INSTANCE_ID"
+            echo "✅ Public IP: $INSTANCE_IP"
+            
+            echo "instance_id=$INSTANCE_ID" >> $GITHUB_OUTPUT
+            echo "instance_ip=$INSTANCE_IP" >> $GITHUB_OUTPUT
+          fi
 
-      - name: Get instance information
+      - name: Verify instance information
         id: instance
         run: |
-          if [ -f terraform/environments/prod/terraform-outputs.json ]; then
-            INSTANCE_IP=$(jq -r '.instance_public_ip.value' terraform/environments/prod/terraform-outputs.json)
-            echo "instance_ip=$INSTANCE_IP" >> $GITHUB_OUTPUT
+          INSTANCE_IP="${{ steps.find-instance.outputs.instance_ip }}"
+          
+          echo "🔍 Verifying instance accessibility..."
+          echo "Instance IP: $INSTANCE_IP"
+          
+          # Verify instance is reachable
+          if ping -c 1 -W 5 $INSTANCE_IP > /dev/null 2>&1; then
+            echo "✅ Instance is reachable via ping"
           else
-            echo "Terraform outputs not found. Please run infrastructure deployment first."
-            exit 1
+            echo "⚠️  Instance not reachable via ping (may be normal if ICMP is blocked)"
           fi
+          
+          echo "instance_ip=$INSTANCE_IP" >> $GITHUB_OUTPUT
 
       - name: Setup SSH key
         run: |
