@@ -67,14 +67,44 @@ jobs:
         id: get-instance
         run: |
           echo "🔍 Finding EC2 instance ID for IP ${{ env.INSTANCE_IP }}..."
+          
+          # Try multiple methods to find the instance
+          INSTANCE_ID=""
+          
+          # Method 1: Try with ip-address filter
+          echo "Trying method 1: ip-address filter..."
           INSTANCE_ID=$(aws ec2 describe-instances \
             --filters "Name=instance-state-name,Values=running" \
-                      "Name=public-ip-address,Values=${{ env.INSTANCE_IP }}" \
+                      "Name=ip-address,Values=${{ env.INSTANCE_IP }}" \
             --query 'Reservations[0].Instances[0].InstanceId' \
-            --output text)
+            --output text 2>/dev/null || echo "None")
           
-          if [ "$INSTANCE_ID" = "None" ] || [ "$INSTANCE_ID" = "null" ]; then
+          # Method 2: If that fails, try network-interface.association.public-ip
+          if [ "$INSTANCE_ID" = "None" ] || [ "$INSTANCE_ID" = "null" ] || [ -z "$INSTANCE_ID" ]; then
+            echo "Method 1 failed, trying method 2: network-interface filter..."
+            INSTANCE_ID=$(aws ec2 describe-instances \
+              --filters "Name=instance-state-name,Values=running" \
+                        "Name=network-interface.association.public-ip,Values=${{ env.INSTANCE_IP }}" \
+              --query 'Reservations[0].Instances[0].InstanceId' \
+              --output text 2>/dev/null || echo "None")
+          fi
+          
+          # Method 3: If still fails, search all running instances and match IP
+          if [ "$INSTANCE_ID" = "None" ] || [ "$INSTANCE_ID" = "null" ] || [ -z "$INSTANCE_ID" ]; then
+            echo "Method 2 failed, trying method 3: search all running instances..."
+            INSTANCE_ID=$(aws ec2 describe-instances \
+              --filters "Name=instance-state-name,Values=running" \
+              --query "Reservations[].Instances[?PublicIpAddress=='${{ env.INSTANCE_IP }}'].InstanceId" \
+              --output text 2>/dev/null || echo "None")
+          fi
+          
+          if [ "$INSTANCE_ID" = "None" ] || [ "$INSTANCE_ID" = "null" ] || [ -z "$INSTANCE_ID" ]; then
             echo "❌ Could not find running instance with IP ${{ env.INSTANCE_IP }}"
+            echo "Available running instances:"
+            aws ec2 describe-instances \
+              --filters "Name=instance-state-name,Values=running" \
+              --query 'Reservations[].Instances[].[InstanceId,PublicIpAddress,Tags[?Key==`Name`].Value|[0]]' \
+              --output table || true
             exit 1
           fi
           
