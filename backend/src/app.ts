@@ -8,6 +8,8 @@ import database from './config/database';
 import { logger } from './utils/logger';
 import { requestLogger } from './middleware/requestLogger';
 import { errorHandler, notFoundHandler } from './middleware/errorHandler';
+
+// Test deployment trigger - GitHub Actions deployment test
 import routes from './routes';
 
 class App {
