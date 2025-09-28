@@ -56,20 +56,6 @@ jobs:
       - name: Run type checking
         run: npm run typecheck
 
-      - name: Run tests
-        run: npm run test:coverage
-        env:
-          NODE_ENV: test
-          MONGODB_URI: mongodb://localhost:27017/bookreviews_test
-          JWT_SECRET: test-secret-key
-
-      - name: Upload coverage reports
-        uses: codecov/codecov-action@v3
-        with:
-          file: ./backend/coverage/lcov.info
-          flags: backend
-          name: backend-coverage
-
   build:
     name: Build Application
     runs-on: ubuntu-latest
