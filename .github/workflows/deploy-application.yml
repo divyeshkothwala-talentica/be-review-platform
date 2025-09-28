@@ -262,45 +262,61 @@ jobs:
           echo "📄 Deployment script content:"
           cat webhook-deploy.sh
           
-          # Try a simple HTTP-based deployment if webhook is available
-          echo "🌐 Attempting HTTP-based deployment trigger..."
-          if curl -f -X POST -H "Content-Type: application/json" \
-             -d '{"action":"deploy","repository":"${{ github.repository }}","ref":"${{ github.ref }}"}' \
-             "http://${{ env.INSTANCE_IP }}:3001/deploy" 2>/dev/null; then
-            echo "✅ HTTP deployment trigger successful"
-          else
-            echo "ℹ️ HTTP deployment endpoint not available (this is expected if not configured)"
-            echo "💡 Consider setting up a simple webhook endpoint on your server"
-          fi
+          # Save deployment script for manual execution
+          echo "💾 Saving deployment script for manual execution..."
+          echo "To deploy manually, copy this script to your server and run it:"
+          echo ""
+          echo "# Copy the script to your server:"
+          echo "scp webhook-deploy.sh ec2-user@${{ env.INSTANCE_IP }}:/tmp/"
+          echo ""
+          echo "# SSH to your server and run:"
+          echo "ssh ec2-user@${{ env.INSTANCE_IP }}"
+          echo "chmod +x /tmp/webhook-deploy.sh"
+          echo "sudo /tmp/webhook-deploy.sh"
+          echo ""
+          echo "🔗 Or run these commands directly on your server:"
+          echo "cd /opt/book-review-api/current/backend && sudo git pull origin main && sudo npm run build && sudo pkill -f 'node.*app.js' && cd dist && sudo nohup node app.js > /var/log/book-review-api.log 2>&1 &"
 
       - name: Verify Deployment
         run: |
           echo "🔍 Verifying deployment..."
           sleep 15
           
-          # Basic health check
+          # Basic health check using HTTPS
           echo "Testing application endpoints..."
           
-          # Try health endpoint
-          if curl -f -m 10 http://${{ env.INSTANCE_IP }}/health 2>/dev/null; then
-            echo "✅ Health check endpoint responded"
+          # Try health endpoint with HTTPS
+          if curl -f -k -m 10 https://${{ env.INSTANCE_IP }}/health 2>/dev/null; then
+            echo "✅ HTTPS Health check endpoint responded"
+          elif curl -f -m 10 http://${{ env.INSTANCE_IP }}/health 2>/dev/null; then
+            echo "✅ HTTP Health check endpoint responded"
           else
             echo "⚠️ Health check endpoint not responding (may not be implemented)"
           fi
           
           # Try root endpoint
-          if curl -f -m 10 http://${{ env.INSTANCE_IP }}/ 2>/dev/null; then
-            echo "✅ Root endpoint responded"
+          if curl -f -k -m 10 https://${{ env.INSTANCE_IP }}/ 2>/dev/null; then
+            echo "✅ HTTPS Root endpoint responded"
+          elif curl -f -m 10 http://${{ env.INSTANCE_IP }}/ 2>/dev/null; then
+            echo "✅ HTTP Root endpoint responded"
           else
             echo "⚠️ Root endpoint not responding"
           fi
           
           # Try API endpoint
-          if curl -f -m 10 http://${{ env.INSTANCE_IP }}/api/v1/books 2>/dev/null; then
-            echo "✅ API endpoint responded"
+          if curl -f -k -m 10 https://${{ env.INSTANCE_IP }}/api/v1/books 2>/dev/null; then
+            echo "✅ HTTPS API endpoint responded"
+          elif curl -f -m 10 http://${{ env.INSTANCE_IP }}/api/v1/books 2>/dev/null; then
+            echo "✅ HTTP API endpoint responded"
           else
             echo "⚠️ API endpoint not responding"
           fi
           
-          echo "🎉 Deployment completed! Application should be running at http://${{ env.INSTANCE_IP }}"
-          echo "📋 Check the Systems Manager command output above for detailed deployment logs"
+          echo "🎉 Deployment pipeline completed!"
+          echo "🌐 Application should be running at: https://${{ env.INSTANCE_IP }}"
+          echo "🔗 Health check: https://${{ env.INSTANCE_IP }}/health"
+          echo ""
+          if [ "${{ steps.check-ssm.outputs.ssm_available }}" = "false" ]; then
+            echo "📋 Manual deployment required - see deployment script above"
+            echo "💡 To enable automatic deployment, configure AWS Systems Manager on your EC2 instance"
+          fi
