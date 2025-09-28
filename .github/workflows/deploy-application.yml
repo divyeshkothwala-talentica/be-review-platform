@@ -111,8 +111,36 @@ jobs:
           echo "✅ Found instance ID: $INSTANCE_ID"
           echo "instance_id=$INSTANCE_ID" >> $GITHUB_OUTPUT
 
-      # Step 4: Deploy to existing infrastructure using Systems Manager
-      - name: 4️⃣ Deploy to Production Server via Systems Manager
+      # Check SSM agent status first
+      - name: Check SSM Agent Status
+        id: check-ssm
+        run: |
+          INSTANCE_ID="${{ steps.get-instance.outputs.instance_id }}"
+          echo "🔍 Checking SSM agent status for instance: $INSTANCE_ID"
+          
+          # Check if instance is managed by SSM
+          SSM_STATUS=$(aws ssm describe-instance-information \
+            --filters "Key=InstanceIds,Values=$INSTANCE_ID" \
+            --query 'InstanceInformationList[0].PingStatus' \
+            --output text 2>/dev/null || echo "NotFound")
+          
+          echo "SSM Status: $SSM_STATUS"
+          
+          if [ "$SSM_STATUS" = "Online" ]; then
+            echo "✅ SSM agent is online and ready"
+            echo "ssm_available=true" >> $GITHUB_OUTPUT
+          else
+            echo "❌ SSM agent is not available or not configured"
+            echo "This could be due to:"
+            echo "1. SSM agent not installed or not running"
+            echo "2. Instance missing required IAM role (AmazonSSMManagedInstanceCore)"
+            echo "3. Security group not allowing outbound HTTPS (port 443)"
+            echo "ssm_available=false" >> $GITHUB_OUTPUT
+          fi
+
+      # Step 4a: Deploy via Systems Manager (if available)
+      - name: 4️⃣a Deploy via Systems Manager
+        if: steps.check-ssm.outputs.ssm_available == 'true'
         run: |
           echo "🚀 Deploying to production server via AWS Systems Manager..."
           
@@ -181,6 +209,69 @@ jobs:
             --instance-id "$INSTANCE_ID" \
             --query 'StandardOutputContent' \
             --output text
+
+      # Step 4b: Alternative deployment via webhook (if SSM not available)
+      - name: 4️⃣b Deploy via Webhook (Fallback)
+        if: steps.check-ssm.outputs.ssm_available == 'false'
+        run: |
+          echo "🔄 SSM not available, using alternative deployment method..."
+          echo "Setting up webhook-based deployment..."
+          
+          # Create a simple deployment webhook script
+          cat > webhook-deploy.sh << 'EOF'
+          #!/bin/bash
+          # This script should be placed on your EC2 server and called via HTTP
+          set -e
+          
+          echo "📦 Starting webhook deployment..."
+          cd /opt/book-review-api/current/backend 2>/dev/null || {
+            echo "Setting up fresh deployment..."
+            sudo mkdir -p /opt/book-review-api
+            cd /opt/book-review-api
+            sudo git clone https://github.com/${{ github.repository }}.git current
+            cd current/backend
+          }
+          
+          echo "📥 Pulling latest code..."
+          sudo git fetch origin
+          sudo git reset --hard origin/main
+          
+          echo "🏗️ Installing dependencies and building..."
+          sudo npm ci --only=production
+          sudo npm run build
+          
+          echo "🔄 Restarting application..."
+          sudo pkill -f "node.*app.js" 2>/dev/null || true
+          sleep 3
+          cd dist
+          sudo nohup node app.js > /var/log/book-review-api.log 2>&1 &
+          
+          echo "✅ Deployment completed successfully"
+          EOF
+          
+          echo "📋 Alternative deployment options:"
+          echo "1. **Manual SSH deployment:** Copy the webhook-deploy.sh script to your server and run it"
+          echo "2. **Setup webhook endpoint:** Create a simple HTTP endpoint on your server that executes this script"
+          echo "3. **Use GitHub webhook:** Configure GitHub to call your server directly on push"
+          echo ""
+          echo "🔧 To setup SSM for future deployments:"
+          echo "1. Attach IAM role 'AmazonSSMManagedInstanceCore' to your EC2 instance"
+          echo "2. Ensure SSM agent is installed and running"
+          echo "3. Allow outbound HTTPS (port 443) in security group"
+          echo ""
+          echo "📄 Deployment script content:"
+          cat webhook-deploy.sh
+          
+          # Try a simple HTTP-based deployment if webhook is available
+          echo "🌐 Attempting HTTP-based deployment trigger..."
+          if curl -f -X POST -H "Content-Type: application/json" \
+             -d '{"action":"deploy","repository":"${{ github.repository }}","ref":"${{ github.ref }}"}' \
+             "http://${{ env.INSTANCE_IP }}:3001/deploy" 2>/dev/null; then
+            echo "✅ HTTP deployment trigger successful"
+          else
+            echo "ℹ️ HTTP deployment endpoint not available (this is expected if not configured)"
+            echo "💡 Consider setting up a simple webhook endpoint on your server"
+          fi
 
       - name: Verify Deployment
         run: |
