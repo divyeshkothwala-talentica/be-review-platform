@@ -9,7 +9,8 @@ import { logger } from './utils/logger';
 import { requestLogger } from './middleware/requestLogger';
 import { errorHandler, notFoundHandler } from './middleware/errorHandler';
 
-// Test deployment trigger - GitHub Actions deployment test
+// HTTPS Deployment Trigger - Testing new nginx reverse proxy setup
+// Deployment timestamp: 2025-09-28T20:30:00Z
 import routes from './routes';
 
 class App {
@@ -97,11 +98,13 @@ class App {
   public listen(): void {
     // Bind to all interfaces (0.0.0.0) to allow external connections
     this.app.listen(config.port, '0.0.0.0', () => {
-      logger.info(`🚀 Server running on port ${config.port}`, {
+      logger.info(`🚀 Server running on port ${config.port} with HTTPS support`, {
         port: config.port,
         host: '0.0.0.0',
         environment: config.nodeEnv,
         apiVersion: config.apiVersion,
+        httpsEnabled: true,
+        deploymentTime: new Date().toISOString(),
       });
     });
   }
