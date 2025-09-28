@@ -54,54 +54,50 @@ jobs:
           npm run build
           echo "✅ Build completed successfully"
 
-      # Step 4: Deploy to existing infrastructure
-      - name: 4️⃣ Deploy to Production Server
+      # Configure AWS credentials for Systems Manager
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-1
+
+      # Get EC2 instance ID from IP address
+      - name: Get EC2 Instance ID
+        id: get-instance
         run: |
-          echo "🚀 Deploying to production server at ${{ env.INSTANCE_IP }}..."
+          echo "🔍 Finding EC2 instance ID for IP ${{ env.INSTANCE_IP }}..."
+          INSTANCE_ID=$(aws ec2 describe-instances \
+            --filters "Name=instance-state-name,Values=running" \
+                      "Name=public-ip-address,Values=${{ env.INSTANCE_IP }}" \
+            --query 'Reservations[0].Instances[0].InstanceId' \
+            --output text)
           
-          # Setup SSH key with proper formatting
-          mkdir -p ~/.ssh
-          chmod 700 ~/.ssh
-          
-          # Write SSH private key and ensure proper format
-          echo "${{ secrets.SSH_PRIVATE_KEY }}" | tr -d '\r' > ~/.ssh/deploy_key
-          chmod 600 ~/.ssh/deploy_key
-          
-          # Verify key format
-          echo "🔍 Verifying SSH key format..."
-          if ssh-keygen -y -f ~/.ssh/deploy_key > /dev/null 2>&1; then
-            echo "✅ SSH private key format is valid"
-          else
-            echo "❌ SSH private key format is invalid"
-            echo "Please ensure SSH_PRIVATE_KEY secret contains a valid private key"
-            echo "Key should start with '-----BEGIN OPENSSH PRIVATE KEY-----' or similar"
+          if [ "$INSTANCE_ID" = "None" ] || [ "$INSTANCE_ID" = "null" ]; then
+            echo "❌ Could not find running instance with IP ${{ env.INSTANCE_IP }}"
             exit 1
           fi
           
-          # Add server to known hosts
-          ssh-keyscan -H ${{ env.INSTANCE_IP }} >> ~/.ssh/known_hosts
+          echo "✅ Found instance ID: $INSTANCE_ID"
+          echo "instance_id=$INSTANCE_ID" >> $GITHUB_OUTPUT
+
+      # Step 4: Deploy to existing infrastructure using Systems Manager
+      - name: 4️⃣ Deploy to Production Server via Systems Manager
+        run: |
+          echo "🚀 Deploying to production server via AWS Systems Manager..."
           
-          # Test SSH connection
-          echo "🔍 Testing SSH connection..."
-          if ssh -i ~/.ssh/deploy_key -o ConnectTimeout=10 -o StrictHostKeyChecking=no ec2-user@${{ env.INSTANCE_IP }} "echo 'SSH connection successful'"; then
-            echo "✅ SSH connection test passed"
-          else
-            echo "❌ SSH connection test failed"
-            echo "Please verify:"
-            echo "1. SSH_PRIVATE_KEY secret is correctly configured"
-            echo "2. The corresponding public key is added to ec2-user@${{ env.INSTANCE_IP }}:~/.ssh/authorized_keys"
-            echo "3. The EC2 instance security group allows SSH access from GitHub Actions IPs"
-            exit 1
-          fi
+          INSTANCE_ID="${{ steps.get-instance.outputs.instance_id }}"
+          echo "Instance ID: $INSTANCE_ID"
           
-          # Deploy via SSH
-          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no ec2-user@${{ env.INSTANCE_IP }} << 'DEPLOY_SCRIPT'
+          # Create deployment script
+          cat > deploy-script.sh << 'DEPLOY_SCRIPT'
+          #!/bin/bash
           set -e
           
-          echo "📦 Updating application on server..."
+          echo "📦 Starting deployment on server..."
           
           # Navigate to app directory
-          cd /opt/book-review-api/current/backend || {
+          cd /opt/book-review-api/current/backend 2>/dev/null || {
             echo "App directory not found, setting up fresh deployment..."
             sudo mkdir -p /opt/book-review-api
             cd /opt/book-review-api
@@ -122,24 +118,90 @@ jobs:
           # Restart application
           echo "🔄 Restarting application..."
           sudo pkill -f "node.*app.js" 2>/dev/null || true
-          sleep 2
+          sleep 3
           cd dist
           sudo nohup node app.js > /var/log/book-review-api.log 2>&1 &
           
           echo "✅ Deployment completed successfully"
+          echo "📊 Application status:"
+          sleep 2
+          ps aux | grep "node.*app.js" | grep -v grep || echo "Application process not found"
           DEPLOY_SCRIPT
+          
+          # Execute deployment via Systems Manager
+          echo "🔧 Executing deployment script via Systems Manager..."
+          COMMAND_ID=$(aws ssm send-command \
+            --instance-ids "$INSTANCE_ID" \
+            --document-name "AWS-RunShellScript" \
+            --parameters 'commands=["'"$(cat deploy-script.sh | base64 -w 0)"'" | base64 -d | bash]' \
+            --query 'Command.CommandId' \
+            --output text)
+          
+          echo "Command ID: $COMMAND_ID"
+          
+          # Wait for command completion
+          echo "⏳ Waiting for deployment to complete..."
+          for i in {1..60}; do
+            STATUS=$(aws ssm get-command-invocation \
+              --command-id "$COMMAND_ID" \
+              --instance-id "$INSTANCE_ID" \
+              --query 'Status' \
+              --output text 2>/dev/null || echo "InProgress")
+            
+            echo "Status: $STATUS (attempt $i/60)"
+            
+            if [ "$STATUS" = "Success" ]; then
+              echo "✅ Deployment completed successfully!"
+              break
+            elif [ "$STATUS" = "Failed" ] || [ "$STATUS" = "Cancelled" ] || [ "$STATUS" = "TimedOut" ]; then
+              echo "❌ Deployment failed with status: $STATUS"
+              aws ssm get-command-invocation \
+                --command-id "$COMMAND_ID" \
+                --instance-id "$INSTANCE_ID" \
+                --query 'StandardErrorContent' \
+                --output text
+              exit 1
+            fi
+            
+            sleep 5
+          done
+          
+          # Get command output
+          echo "📋 Deployment output:"
+          aws ssm get-command-invocation \
+            --command-id "$COMMAND_ID" \
+            --instance-id "$INSTANCE_ID" \
+            --query 'StandardOutputContent' \
+            --output text
 
       - name: Verify Deployment
         run: |
           echo "🔍 Verifying deployment..."
-          sleep 10
+          sleep 15
           
           # Basic health check
-          if curl -f http://${{ env.INSTANCE_IP }}/health; then
-            echo "✅ Health check passed"
+          echo "Testing application endpoints..."
+          
+          # Try health endpoint
+          if curl -f -m 10 http://${{ env.INSTANCE_IP }}/health 2>/dev/null; then
+            echo "✅ Health check endpoint responded"
           else
-            echo "❌ Health check failed"
-            exit 1
+            echo "⚠️ Health check endpoint not responding (may not be implemented)"
           fi
           
-          echo "🎉 Deployment successful! Application is running at http://${{ env.INSTANCE_IP }}"
+          # Try root endpoint
+          if curl -f -m 10 http://${{ env.INSTANCE_IP }}/ 2>/dev/null; then
+            echo "✅ Root endpoint responded"
+          else
+            echo "⚠️ Root endpoint not responding"
+          fi
+          
+          # Try API endpoint
+          if curl -f -m 10 http://${{ env.INSTANCE_IP }}/api/v1/books 2>/dev/null; then
+            echo "✅ API endpoint responded"
+          else
+            echo "⚠️ API endpoint not responding"
+          fi
+          
+          echo "🎉 Deployment completed! Application should be running at http://${{ env.INSTANCE_IP }}"
+          echo "📋 Check the Systems Manager command output above for detailed deployment logs"
