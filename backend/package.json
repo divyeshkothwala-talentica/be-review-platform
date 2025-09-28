@@ -10,6 +10,7 @@
   "scripts": {
     "dev": "nodemon src/app.ts",
     "build": "tsc",
+    "build:production": "npm install && npm run build",
     "start": "node dist/app.js",
     "test": "jest",
     "test:watch": "jest --watch",
