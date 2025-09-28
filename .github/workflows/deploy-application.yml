@@ -160,7 +160,9 @@ jobs:
               "sudo git reset --hard origin/main",
               "echo \"🏗️ Installing dependencies and building...\"",
               "sudo npm ci",
+              "echo \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\" | sudo tee build-timestamp.txt",
               "sudo npm run build",
+              "echo \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\" | sudo tee deployment-timestamp.txt",
               "echo \"🔄 Restarting application...\"",
               "sudo pkill -f \"node.*app.js\" 2>/dev/null || true",
               "sleep 3",
@@ -238,7 +240,14 @@ jobs:
           
           echo "🏗️ Installing dependencies and building..."
           sudo npm ci
+          
+          # Create build timestamp
+          echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)" | sudo tee build-timestamp.txt
+          
           sudo npm run build
+          
+          # Create deployment timestamp
+          echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)" | sudo tee deployment-timestamp.txt
           
           echo "🔄 Restarting application..."
           sudo pkill -f "node.*app.js" 2>/dev/null || true
@@ -282,41 +291,50 @@ jobs:
           echo "🔍 Verifying deployment..."
           sleep 15
           
-          # Basic health check using HTTPS
-          echo "Testing application endpoints..."
+          # Check health endpoint and extract deployment info
+          echo "Testing health endpoint and checking deployment timestamps..."
           
-          # Try health endpoint with HTTPS
-          if curl -f -k -m 10 https://${{ env.INSTANCE_IP }}/health 2>/dev/null; then
-            echo "✅ HTTPS Health check endpoint responded"
-          elif curl -f -m 10 http://${{ env.INSTANCE_IP }}/health 2>/dev/null; then
-            echo "✅ HTTP Health check endpoint responded"
+          HEALTH_RESPONSE=$(curl -s -k -m 10 https://${{ env.INSTANCE_IP }}/health 2>/dev/null || curl -s -m 10 http://${{ env.INSTANCE_IP }}/health 2>/dev/null || echo "")
+          
+          if [ -n "$HEALTH_RESPONSE" ]; then
+            echo "✅ Health endpoint responded successfully"
+            echo "📋 Health Response:"
+            echo "$HEALTH_RESPONSE" | jq '.' 2>/dev/null || echo "$HEALTH_RESPONSE"
+            
+            # Extract deployment timestamp if available
+            DEPLOYMENT_TIME=$(echo "$HEALTH_RESPONSE" | jq -r '.data.deploymentTime // empty' 2>/dev/null || echo "")
+            BUILD_TIME=$(echo "$HEALTH_RESPONSE" | jq -r '.data.buildTime // empty' 2>/dev/null || echo "")
+            
+            if [ -n "$DEPLOYMENT_TIME" ]; then
+              echo "🕒 Deployment Time: $DEPLOYMENT_TIME"
+            fi
+            
+            if [ -n "$BUILD_TIME" ]; then
+              echo "🔨 Build Time: $BUILD_TIME"
+            fi
+            
+            # Check if deployment was automatic or manual
+            if [ "${{ steps.check-ssm.outputs.ssm_available }}" = "true" ]; then
+              echo "🚀 Deployment Method: Automatic via AWS Systems Manager"
+              echo "✅ Deployment completed successfully!"
+            else
+              echo "📋 Deployment Method: Manual (SSM not available)"
+              echo "ℹ️ To enable automatic deployment, configure AWS Systems Manager"
+            fi
+            
           else
-            echo "⚠️ Health check endpoint not responding (may not be implemented)"
+            echo "❌ Health endpoint not responding"
+            echo "🔍 Checking if application is running..."
+            
+            # Try to check if any node process is running
+            echo "Please check manually:"
+            echo "1. SSH to your server: ssh ec2-user@${{ env.INSTANCE_IP }}"
+            echo "2. Check application logs: sudo tail -f /var/log/book-review-api.log"
+            echo "3. Check running processes: ps aux | grep node"
           fi
           
-          # Try root endpoint
-          if curl -f -k -m 10 https://${{ env.INSTANCE_IP }}/ 2>/dev/null; then
-            echo "✅ HTTPS Root endpoint responded"
-          elif curl -f -m 10 http://${{ env.INSTANCE_IP }}/ 2>/dev/null; then
-            echo "✅ HTTP Root endpoint responded"
-          else
-            echo "⚠️ Root endpoint not responding"
-          fi
-          
-          # Try API endpoint
-          if curl -f -k -m 10 https://${{ env.INSTANCE_IP }}/api/v1/books 2>/dev/null; then
-            echo "✅ HTTPS API endpoint responded"
-          elif curl -f -m 10 http://${{ env.INSTANCE_IP }}/api/v1/books 2>/dev/null; then
-            echo "✅ HTTP API endpoint responded"
-          else
-            echo "⚠️ API endpoint not responding"
-          fi
-          
-          echo "🎉 Deployment pipeline completed!"
-          echo "🌐 Application should be running at: https://${{ env.INSTANCE_IP }}"
-          echo "🔗 Health check: https://${{ env.INSTANCE_IP }}/health"
           echo ""
-          if [ "${{ steps.check-ssm.outputs.ssm_available }}" = "false" ]; then
-            echo "📋 Manual deployment required - see deployment script above"
-            echo "💡 To enable automatic deployment, configure AWS Systems Manager on your EC2 instance"
-          fi
+          echo "🎉 Deployment pipeline completed!"
+          echo "🌐 Application URL: https://${{ env.INSTANCE_IP }}"
+          echo "🔗 Health check: https://${{ env.INSTANCE_IP }}/health"
+          echo "📊 API endpoints: https://${{ env.INSTANCE_IP }}/api/v1/"
