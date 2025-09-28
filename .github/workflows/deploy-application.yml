@@ -69,11 +69,12 @@ jobs:
           
           # Verify key format
           echo "🔍 Verifying SSH key format..."
-          if ssh-keygen -l -f ~/.ssh/deploy_key; then
-            echo "✅ SSH key format is valid"
+          if ssh-keygen -y -f ~/.ssh/deploy_key > /dev/null 2>&1; then
+            echo "✅ SSH private key format is valid"
           else
-            echo "❌ SSH key format is invalid"
+            echo "❌ SSH private key format is invalid"
             echo "Please ensure SSH_PRIVATE_KEY secret contains a valid private key"
+            echo "Key should start with '-----BEGIN OPENSSH PRIVATE KEY-----' or similar"
             exit 1
           fi
           
