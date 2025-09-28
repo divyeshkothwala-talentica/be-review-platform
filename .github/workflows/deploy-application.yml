@@ -1,12 +1,16 @@
-name: Simple Deployment Pipeline
+name: Simple Deployment Pipeline (DISABLED)
+
+# DISABLED: This workflow has been replaced by deploy-main.yml
+# on:
+#   push:
+#     branches:
+#       - main
+#     paths:
+#       - 'backend/**'
+#       - '.github/workflows/deploy-application.yml'
 
 on:
-  push:
-    branches:
-      - main
-    paths:
-      - 'backend/**'
-      - '.github/workflows/deploy-application.yml'
+  workflow_dispatch:  # Only allow manual triggering
 
 env:
   NODE_VERSION: '18'
